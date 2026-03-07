@@ -8,11 +8,11 @@
  * 3. スプレッドシートを「リンクを知っている全員が閲覧可」に共有
  * 4. 下記 GOOGLE_SHEETS_API_KEY に API キーを設定（または環境変数で上書き）
  */
+import { getRuntimeConfig } from '../lib/runtimeConfig.js';
+
 export const SPREADSHEET_ID = '1RRZWx3Oa8ONpkszDQTdDsoE2h2N0aUNr3VcBQVwQ17Q';
 export const GROUP_SHEET_NAME = 'group';
 export const SUPPLIER_SHEET_NAME = 'supplier';
 
 /** API キーが未設定の場合はサンプルデータを使用します。設定するとスプレッドシートから取得します。 */
-export const GOOGLE_SHEETS_API_KEY = typeof import.meta.env?.VITE_GOOGLE_SHEETS_API_KEY === 'string'
-  ? import.meta.env.VITE_GOOGLE_SHEETS_API_KEY.trim()
-  : '';
+export const GOOGLE_SHEETS_API_KEY = getRuntimeConfig('VITE_GOOGLE_SHEETS_API_KEY');

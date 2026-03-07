@@ -78,6 +78,17 @@ API キーを設定しない場合はサンプルデータ（数件）が使わ�
 
 `VITE_GEMINI_API_KEY` が未設定の場合は、従来どおりキーワード一致による推測になります。
 
+## Cloud Run での環境変数設定
+
+Cloud Run では `.env` は自動で使われません。次の環境変数を **サービスの環境変数** として設定してください。
+
+```text
+VITE_GEMINI_API_KEY=あなたのGemini APIキー
+VITE_GOOGLE_SHEETS_API_KEY=あなたのGoogle Sheets APIキー
+```
+
+このアプリはコンテナ起動時に環境変数から `/config.js` を生成し、ブラウザ側で読み込みます。
+
 ## 制限・注意
 
 - スプレッドシート**書き込み**機能は Phase2 で実装予定です。

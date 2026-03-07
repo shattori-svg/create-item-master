@@ -3,10 +3,9 @@
  * 商品名（英・泰）とマスタ一覧を渡し、最も適切な分類コードを1件返す
  */
 import { GoogleGenAI } from '@google/genai/web';
+import { getRuntimeConfig } from './runtimeConfig.js';
 
-const GEMINI_API_KEY = typeof import.meta.env?.VITE_GEMINI_API_KEY === 'string'
-  ? import.meta.env.VITE_GEMINI_API_KEY.trim()
-  : '';
+const GEMINI_API_KEY = getRuntimeConfig('VITE_GEMINI_API_KEY');
 
 const MODEL = 'gemini-2.5-flash';
 
