@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>商品登録 取り込みファイル作成</title>
+  <link rel="stylesheet" href="/src/styles.css" />
+</head>
+<body>
+  <div id="app">
+    <div class="top-row">
+      <div class="department-row">
+        <label for="department" data-i18n="label.department">部門</label>
+        <select id="department" name="department"></select>
+        <span id="department-warn" class="warn-msg" aria-live="polite"></span>
+      </div>
+      <div class="lang-switch">
+        <button type="button" id="btn-lang-ja" class="lang-btn active" data-lang="ja">日本語</button>
+        <button type="button" id="btn-lang-th" class="lang-btn" data-lang="th">ไทย</button>
+      </div>
+    </div>
+
+    <div class="main-layout">
+      <section class="form-section" aria-label="入力フォーム">
+        <p id="master-status" class="master-status" aria-live="polite"></p>
+        <form id="item-form" class="item-form">
+          <!-- Step 1: 基本情報 -->
+          <div class="form-step form-step--1" data-step="1">
+            <h3 class="form-step-title" data-i18n="step.basic">基本情報</h3>
+            <div class="form-step-body">
+              <div class="form-group form-group--required">
+                <label for="barcode" data-i18n="label.barcode">バーコード</label>
+                <input type="text" id="barcode" name="barcode" />
+                <span id="err-barcode" class="error-msg"></span>
+              </div>
+              <div class="form-group form-group--required">
+                <label for="nameEng" data-i18n="label.nameEng">商品名（英語）</label>
+                <input type="text" id="nameEng" name="nameEng" maxlength="60" />
+                <span id="err-nameEng" class="error-msg"></span>
+              </div>
+              <div class="form-group form-group--optional">
+                <label for="nameTha"><span data-i18n="label.nameTha">商品名（タイ語）</span></label>
+                <input type="text" id="nameTha" name="nameTha" maxlength="60" />
+                <span id="err-nameTha" class="error-msg"></span>
+              </div>
+              <div class="form-group form-group--required">
+                <label for="productGroup" data-i18n="label.classification">分類コード</label>
+                <div class="combo-with-suggest">
+                  <div class="combo-wrap">
+                    <input type="text" id="productGroup" name="productGroup" list="productGroup-list" placeholder="" autocomplete="off" />
+                    <datalist id="productGroup-list"></datalist>
+                    <input type="hidden" id="productGroupCode" name="productGroupCode" />
+                  </div>
+                  <button type="button" id="btn-suggest-classification" class="btn-suggest" data-i18n="btn.suggest" title="商品名から分類をAI推測">AI推測</button>
+                </div>
+                <span id="suggest-source-msg" class="suggest-source-msg" aria-live="polite"></span>
+                <span id="err-productGroup" class="error-msg"></span>
+              </div>
+              <div class="form-row form-row-narrow">
+                <div class="form-group form-group-narrow form-group--required">
+                  <label for="sizeEng" data-i18n="label.sizeEng">規格（英）</label>
+                  <input type="text" id="sizeEng" name="sizeEng" value="1pcs" />
+                </div>
+                <div class="form-group form-group-narrow form-group--optional">
+                  <label for="sizeTha"><span data-i18n="label.sizeTha">規格（タイ）</span></label>
+                  <input type="text" id="sizeTha" name="sizeTha" />
+                </div>
+                <div class="form-group form-group-narrow form-group--required">
+                  <label for="taxRate" data-i18n="label.taxRate">税率</label>
+                  <select id="taxRate" name="taxRate">
+                    <option value="0">0%</option>
+                    <option value="7" selected>7%</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Step 2: 取引情報 -->
+          <div class="form-step form-step--2" data-step="2">
+            <h3 class="form-step-title" data-i18n="step.trade">取引情報</h3>
+            <div class="form-step-body">
+              <div class="form-group form-group--required">
+                <label for="supplier" data-i18n="label.supplier">仕入先</label>
+                <div class="combo-wrap">
+                  <input type="text" id="supplier" name="supplier" list="supplier-list" placeholder="" autocomplete="off" />
+                  <datalist id="supplier-list"></datalist>
+                  <input type="hidden" id="supplierCode" name="supplierCode" />
+                </div>
+                <span id="err-supplier" class="error-msg"></span>
+              </div>
+              <div class="form-row">
+                <div class="form-group form-group--required">
+                  <label for="unitCost" data-i18n="label.unitCost">原価</label>
+                  <input type="text" inputmode="decimal" id="unitCost" name="unitCost" data-min="0" />
+                </div>
+                <div class="form-group form-group--required">
+                  <label for="orderQty" data-i18n="label.orderQty">発注入数</label>
+                  <input type="number" id="orderQty" name="orderQty" min="1" />
+                </div>
+              </div>
+              <div class="form-group form-group-narrow form-group--optional">
+                <label for="leadTime"><span data-i18n="label.leadTime">発注リードタイム（日）</span></label>
+                <input type="number" id="leadTime" name="leadTime" min="0" value="2" />
+              </div>
+            </div>
+          </div>
+
+          <!-- Step 3: 販売情報 -->
+          <div class="form-step form-step--3" data-step="3">
+            <h3 class="form-step-title" data-i18n="step.sales">販売情報</h3>
+            <div class="form-step-body">
+              <div class="form-row">
+                <div class="form-group form-group--required">
+                  <label for="unitPrice" data-i18n="label.unitPrice">売価</label>
+                  <input type="text" inputmode="decimal" id="unitPrice" name="unitPrice" data-min="0" />
+                </div>
+                <div class="form-group form-group--required">
+                  <label for="salesQty" data-i18n="label.salesQty">販売入数</label>
+                  <input type="number" id="salesQty" name="salesQty" min="1" value="1" />
+                </div>
+              </div>
+              <div id="case-fields" class="case-fields" hidden>
+                <div class="form-group form-group--required form-group--conditional">
+                  <label for="caseBarcode" data-i18n="label.caseBarcode">ケースJANコード</label>
+                  <input type="text" id="caseBarcode" name="caseBarcode" />
+                  <span id="err-caseBarcode" class="error-msg"></span>
+                </div>
+                <div class="form-group form-group--optional">
+                  <label for="caseName" data-i18n="label.caseName">ケース商品名</label>
+                  <input type="text" id="caseName" name="caseName" maxlength="60" />
+                </div>
+                <div class="form-row form-row-narrow">
+                  <div class="form-group form-group-narrow form-group--optional">
+                    <label for="caseSizeEng" data-i18n="label.caseSizeEng">ケース規格（英語）</label>
+                    <input type="text" id="caseSizeEng" name="caseSizeEng" />
+                  </div>
+                  <div class="form-group form-group-narrow form-group--optional">
+                    <label for="caseSizeTha"><span data-i18n="label.caseSizeTha">ケース規格（タイ語）</span></label>
+                    <input type="text" id="caseSizeTha" name="caseSizeTha" />
+                  </div>
+                </div>
+                <div class="form-group form-group--required form-group--conditional">
+                  <label for="casePrice" data-i18n="label.casePrice">ケース売価</label>
+                  <input type="text" inputmode="decimal" id="casePrice" name="casePrice" data-min="0" />
+                  <span id="err-casePrice" class="error-msg"></span>
+                </div>
+              </div>
+              <div class="form-group form-group--optional">
+                <label for="brandEng"><span data-i18n="label.brandEng">ブランド（英語）</span></label>
+                <input type="text" id="brandEng" name="brandEng" />
+              </div>
+              <div class="form-group form-group--optional">
+                <label for="brandTha"><span data-i18n="label.brandTha">ブランド（タイ）</span></label>
+                <input type="text" id="brandTha" name="brandTha" />
+              </div>
+            </div>
+          </div>
+
+          <div class="form-actions">
+            <button type="submit" id="btn-add" class="btn-add-primary" data-i18n="btn.add" disabled>入力完了</button>
+            <button type="button" id="btn-clear" data-i18n="btn.clear">クリア</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="list-section" aria-label="入力済み商品リスト">
+        <div class="list-section-header">
+          <h2 class="list-title" data-i18n="title.itemList">入力済み商品リスト</h2>
+          <div class="list-header-actions">
+            <button type="button" id="btn-import" data-i18n="btn.import">ファイルインポート</button>
+            <input type="file" id="file-import" accept=".xlsx" hidden />
+          </div>
+        </div>
+        <p id="list-max-warn" class="warn-msg" hidden></p>
+        <div class="table-wrap">
+          <table id="item-table" class="item-table">
+            <thead>
+              <tr>
+                <th><input type="checkbox" id="select-all" title="全選択" /></th>
+                <th data-i18n="table.barcode">バーコード</th>
+                <th data-i18n="table.nameEng">商品名(英)</th>
+                <th data-i18n="table.nameTha">商品名(泰)</th>
+                <th data-i18n="table.group">分類</th>
+                <th data-i18n="table.supplier">仕入先</th>
+                <th data-i18n="table.orderQty">発注入数</th>
+                <th data-i18n="table.cost">原価</th>
+                <th data-i18n="table.price">売価</th>
+              </tr>
+            </thead>
+            <tbody id="item-tbody"></tbody>
+          </table>
+        </div>
+        <button type="button" id="btn-delete" data-i18n="btn.delete">削除</button>
+
+        <div class="output-area">
+          <div class="output-checks">
+            <label><input type="checkbox" id="out-item" checked /> Item</label>
+            <label><input type="checkbox" id="out-additional" checked /> Additional Barcode</label>
+          </div>
+          <div class="output-filename">
+            <label for="outputFilename" data-i18n="label.outputFilename">ファイル名</label>
+            <input type="text" id="outputFilename" name="outputFilename" placeholder="" />
+          </div>
+          <div class="output-buttons">
+            <button type="button" id="btn-export" data-i18n="btn.export">ファイル出力</button>
+          </div>
+          <div id="export-errors" class="error-block" role="alert" hidden></div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div id="export-success-modal" class="modal-overlay" hidden aria-modal="true" role="dialog" aria-labelledby="export-modal-title">
+    <div class="modal-content">
+      <h3 id="export-modal-title" class="modal-title" data-i18n="msg.exportDone">ファイルを出力しました</h3>
+      <p class="modal-text" data-i18n="msg.exportDoneDetail">インポート画面で取り込んでください。</p>
+      <div class="modal-actions">
+        <a id="btn-goto-import" href="#" target="_blank" rel="noopener noreferrer" class="btn-modal btn-modal-primary" data-i18n="btn.goToImport">インポート画面へ</a>
+        <button type="button" id="btn-close-export-modal" class="btn-modal" data-i18n="btn.close">閉じる</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="numpad" class="numpad" hidden aria-label="数値入力">
+    <div class="numpad-keys">
+      <button type="button" class="numpad-key" data-value="7">7</button>
+      <button type="button" class="numpad-key" data-value="8">8</button>
+      <button type="button" class="numpad-key" data-value="9">9</button>
+      <button type="button" class="numpad-key" data-value="4">4</button>
+      <button type="button" class="numpad-key" data-value="5">5</button>
+      <button type="button" class="numpad-key" data-value="6">6</button>
+      <button type="button" class="numpad-key" data-value="1">1</button>
+      <button type="button" class="numpad-key" data-value="2">2</button>
+      <button type="button" class="numpad-key" data-value="3">3</button>
+      <button type="button" class="numpad-key" data-value=".">.</button>
+      <button type="button" class="numpad-key" data-value="0">0</button>
+      <button type="button" class="numpad-key numpad-backspace" data-action="backspace">⌫</button>
+      <button type="button" class="numpad-key numpad-clear" data-action="clear">C</button>
+    </div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

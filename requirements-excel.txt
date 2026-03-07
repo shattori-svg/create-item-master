@@ -1,0 +1,2 @@
+# Excel → Markdown 変換スクリプト用（scripts/read_excel_to_md.py）
+openpyxl>=3.1.0

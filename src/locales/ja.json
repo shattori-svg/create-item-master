@@ -1,0 +1,83 @@
+{
+  "label": {
+    "required": "必須",
+    "optional": "任意",
+    "department": "部門",
+    "classification": "分類コード",
+    "barcode": "バーコード",
+    "nameEng": "商品名（英語）",
+    "nameTha": "商品名（タイ語）",
+    "sizeEng": "規格（英語）",
+    "sizeTha": "規格（タイ）",
+    "taxRate": "税率",
+    "supplier": "仕入先",
+    "unitCost": "原価",
+    "orderQty": "発注入数",
+    "leadTime": "発注リードタイム（日）",
+    "unitPrice": "売価",
+    "salesQty": "販売入数",
+    "caseBarcode": "ケースJANコード",
+    "caseName": "ケース商品名",
+    "caseSizeEng": "ケース規格（英語）",
+    "caseSizeTha": "ケース規格（タイ語）",
+    "casePrice": "ケース売価",
+    "brandEng": "ブランド（英語）",
+    "brandTha": "ブランド（タイ）",
+    "outputFilename": "ファイル名"
+  },
+  "legend": {
+    "required": "必須項目",
+    "optional": "任意項目"
+  },
+  "step": {
+    "basic": "基本情報",
+    "trade": "取引情報",
+    "sales": "販売情報"
+  },
+  "title": {
+    "itemList": "入力済み商品リスト"
+  },
+  "table": {
+    "barcode": "バーコード",
+    "nameEng": "商品名(英)",
+    "nameTha": "商品名(泰)",
+    "group": "分類",
+    "supplier": "仕入先",
+    "orderQty": "発注入数",
+    "cost": "原価",
+    "price": "売価",
+    "action": "操作"
+  },
+  "error": {
+    "required": "入力してください",
+    "barcodeDuplicate": "このバーコードは既にリストに登録されています",
+    "barcodeInvalid": "バーコードの形式が正しくありません（GS-1）",
+    "barcodeCheckDigit": "バーコードのチェックディジットが正しくありません",
+    "nameMaxLength": "60文字以内で入力してください",
+    "numeric": "数値を入力してください",
+    "listMax": "リストは最大100件までです",
+    "departmentLocked": "リストに商品がある間は部門を変更できません。変更する場合はリストを空にしてください。",
+    "caseRequired": "販売入数が2以上のときはケースJANコード・ケース売価を入力してください"
+  },
+  "msg": {
+    "importSuccess": "読み込みました",
+    "importReplace": "リストを置き換えますか？",
+    "importAppend": "リストに追記します",
+    "suggestByAI": "AIで推測しました",
+    "suggestByKeyword": "キーワードで推測しました",
+    "exportDone": "ファイルを出力しました",
+    "exportDoneDetail": "インポート画面で取り込んでください。"
+  },
+  "btn": {
+    "add": "入力完了",
+    "suggest": "AI推測",
+    "suggesting": "AI推測中...",
+    "clear": "クリア",
+    "delete": "削除",
+    "export": "ファイル出力",
+    "import": "ファイルインポート",
+    "edit": "編集",
+    "goToImport": "インポート画面へ",
+    "close": "閉じる"
+  }
+}

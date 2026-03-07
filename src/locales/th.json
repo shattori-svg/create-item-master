@@ -1,0 +1,83 @@
+{
+  "label": {
+    "required": "บังคับ",
+    "optional": "ไม่บังคับ",
+    "department": "แผนก",
+    "classification": "รหัสหมวดหมู่",
+    "barcode": "บาร์โค้ด",
+    "nameEng": "ชื่อสินค้า (อังกฤษ)",
+    "nameTha": "ชื่อสินค้า (ไทย)",
+    "sizeEng": "ขนาด (อังกฤษ)",
+    "sizeTha": "ขนาด (ไทย)",
+    "taxRate": "อัตราภาษี",
+    "supplier": "ผู้จัดส่ง",
+    "unitCost": "ต้นทุน",
+    "orderQty": "จำนวนสั่งซื้อ",
+    "leadTime": "ระยะเวลานำ (วัน)",
+    "unitPrice": "ราคาขาย",
+    "salesQty": "จำนวนขาย",
+    "caseBarcode": "บาร์โค้ดกล่อง",
+    "caseName": "ชื่อสินค้ากล่อง",
+    "caseSizeEng": "ขนาดกล่อง (อังกฤษ)",
+    "caseSizeTha": "ขนาดกล่อง (ไทย)",
+    "casePrice": "ราคาขายกล่อง",
+    "brandEng": "แบรนด์ (อังกฤษ)",
+    "brandTha": "แบรนด์ (ไทย)",
+    "outputFilename": "ชื่อไฟล์"
+  },
+  "legend": {
+    "required": "บังคับ",
+    "optional": "ไม่บังคับ"
+  },
+  "step": {
+    "basic": "ข้อมูลพื้นฐาน",
+    "trade": "ข้อมูลการซื้อขาย",
+    "sales": "ข้อมูลการขาย"
+  },
+  "title": {
+    "itemList": "รายการสินค้าที่ป้อน"
+  },
+  "table": {
+    "barcode": "บาร์โค้ด",
+    "nameEng": "ชื่อ(อังกฤษ)",
+    "nameTha": "ชื่อ(ไทย)",
+    "group": "หมวดหมู่",
+    "supplier": "ผู้จัดส่ง",
+    "orderQty": "จำนวนสั่งซื้อ",
+    "cost": "ต้นทุน",
+    "price": "ราคา",
+    "action": "ดำเนินการ"
+  },
+  "btn": {
+    "add": "เพิ่มรายการ",
+    "suggest": "AI แนะนำ",
+    "suggesting": "กำลัง AI แนะนำ...",
+    "clear": "ล้าง",
+    "delete": "ลบ",
+    "export": "ส่งออกไฟล์",
+    "import": "นำเข้าไฟล์",
+    "edit": "แก้ไข",
+    "goToImport": "ไปหน้านำเข้า",
+    "close": "ปิด"
+  },
+  "error": {
+    "required": "กรุณากรอก",
+    "barcodeDuplicate": "บาร์โค้ดนี้มีในรายการแล้ว",
+    "barcodeInvalid": "รูปแบบบาร์โค้ดไม่ถูกต้อง (GS-1)",
+    "barcodeCheckDigit": "ตัวเลขตรวจสอบบาร์โค้ดไม่ถูกต้อง",
+    "nameMaxLength": "กรุณากรอกไม่เกิน 60 ตัวอักษร",
+    "numeric": "กรุณากรอกตัวเลข",
+    "listMax": "รายการสูงสุด 100 รายการ",
+    "departmentLocked": "ไม่สามารถเปลี่ยนแผนกเมื่อมีสินค้าในรายการ กรุณาล้างรายการก่อน",
+    "caseRequired": "เมื่อจำนวนขายตั้งแต่ 2 ขึ้นไป กรุณากรอกบาร์โค้ดกล่องและราคาขายกล่อง"
+  },
+  "msg": {
+    "importSuccess": "นำเข้าเรียบร้อย",
+    "importReplace": "แทนที่รายการหรือไม่?",
+    "importAppend": "เพิ่มต่อท้ายรายการ",
+    "suggestByAI": "แนะนำโดย AI",
+    "suggestByKeyword": "แนะนำจากคำค้น",
+    "exportDone": "ส่งออกไฟล์เรียบร้อยแล้ว",
+    "exportDoneDetail": "กรุณานำเข้าที่หน้านำเข้า"
+  }
+}
