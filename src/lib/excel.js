@@ -49,10 +49,9 @@ function itemToRow(item, departmentCode) {
     '',
     ITEM_FIXED.height, ITEM_FIXED.width, ITEM_FIXED.length, ITEM_FIXED.weight,
     ITEM_FIXED.inventoryType, ITEM_FIXED.inventoryPostingGroup, ITEM_FIXED.genProdPostingGroup, vat,
-    null, null, // 21,22 は上書きしない
-    item.supplierCode || '',
-    null, // 24: Vendor Item No. は上書きしない
-    item.unitCost != null ? Number(item.unitCost) : '',
+    item.supplierCode || '', // 23: Vendor No. (default)
+    null, // 24: Vendor Item No. (default) は上書きしない
+    item.unitCost != null ? Number(item.unitCost) : '', // 25: Unit Cost (default)
     ITEM_FIXED.autoReplenishment,
     item.leadTime != null ? Number(item.leadTime) : 2,
     item.unitPrice != null ? Number(item.unitPrice) : '',

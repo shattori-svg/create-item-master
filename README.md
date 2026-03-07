@@ -7,6 +7,8 @@
 
 - [要件定義書](./要件定義書.md)
 - [基本設計書](./基本設計書.md)
+- [ユーザーマニュアル（日本語）](./docs/ユーザーマニュアル.md)
+- [คู่มือการใช้งาน (タイ語)](./docs/คู่มือการใช้งาน.md)
 
 ## 開発の動かし方
 
@@ -32,6 +34,29 @@ npm run build
 ```
 
 `dist/` に静的ファイルが出力されます。任意の Web サーバーで配信できます。
+
+### Cloud Run へのデプロイ
+
+gcloud CLI でログイン・プロジェクト設定済みの状態で実行します。
+
+**Linux / macOS（Cloud Shell 可）:**
+
+```bash
+chmod +x deploy.sh
+./deploy.sh
+```
+
+**Windows（PowerShell）:**
+
+```powershell
+.\deploy.ps1
+```
+
+環境変数で上書き可能です。
+
+- `GCP_PROJECT_ID` … プロジェクト ID（未設定時は `gcloud config get-value project`）
+- `GCP_REGION` … リージョン（既定: `asia-northeast1`）
+- `CLOUD_RUN_SERVICE` … サービス名（既定: `item-master-create-dev`）
 
 ## 構成（Phase1）
 

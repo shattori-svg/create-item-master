@@ -27,7 +27,8 @@ export function t(key) {
   for (const p of parts) {
     v = v?.[p];
   }
-  return v != null ? String(v) : key;
+  if (v == null || v === '') return key;
+  return String(v);
 }
 
 function applyToPage() {

@@ -87,7 +87,10 @@ async function init() {
   const lang = getLang();
   Array.from(el.department.options).forEach((opt) => {
     const d = DEPARTMENTS.find((x) => x.code === opt.value);
-    if (d) opt.textContent = `${d.code} ${lang === 'ja' ? d.nameJa : d.nameTh}`;
+    if (d) {
+      const name = lang === 'ja' ? (d.nameJa ?? d.nameTh) : (d.nameTh ?? d.nameJa);
+      opt.textContent = `${d.code} ${name}`;
+    }
   });
 }
   document.getElementById('btn-lang-ja').addEventListener('click', () => { setLanguage('ja'); refreshDepartmentOptions(); document.querySelectorAll('.lang-btn').forEach((b) => b.classList.remove('active')); document.getElementById('btn-lang-ja').classList.add('active'); });
@@ -118,7 +121,8 @@ function fillDepartmentSelect() {
   DEPARTMENTS.forEach((d) => {
     const opt = document.createElement('option');
     opt.value = d.code;
-    opt.textContent = `${d.code} ${lang === 'ja' ? d.nameJa : d.nameTh}`;
+    const name = lang === 'ja' ? (d.nameJa ?? d.nameTh) : (d.nameTh ?? d.nameJa);
+    opt.textContent = `${d.code} ${name}`;
     el.department.appendChild(opt);
   });
   el.department.value = selectedDepartment;
