@@ -2,16 +2,15 @@
  * 多言語切り替え（基本設計書 8）
  * 初期表示は日本語。
  */
+import jaMessages from '../locales/ja.json';
+import thMessages from '../locales/th.json';
+
 let currentLang = 'ja';
 let messages = { ja: {}, th: {} };
 
 export async function initI18n() {
-  const [ja, th] = await Promise.all([
-    fetch('/src/locales/ja.json').then((r) => r.json()),
-    fetch('/src/locales/th.json').then((r) => r.json()),
-  ]);
-  messages.ja = ja;
-  messages.th = th;
+  messages.ja = jaMessages;
+  messages.th = thMessages;
   return messages;
 }
 
