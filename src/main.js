@@ -4,7 +4,8 @@
  */
 import { initI18n, setLanguage, t, getLang } from './lib/i18n.js';
 import { DEPARTMENTS } from './data/departments.js';
-import { MAX_ITEMS, DEFAULT_SPEC_ENG, DEFAULT_SALES_QTY, DEFAULT_TAX_RATE, DEFAULT_LEAD_TIME, IMPORT_PAGE_URL, getDefaultOutputFilename } from './data/constants.js';
+import { PRODUCT_TYPES, PRODUCT_TYPE_MANUFACTURER, PRODUCT_TYPE_SCALE, PRODUCT_TYPE_RAW_MATERIAL } from './data/productType.js';
+import { MAX_ITEMS, DEFAULT_SPEC_ENG, DEFAULT_SALES_QTY, DEFAULT_TAX_RATE, DEFAULT_LEAD_TIME, IMPORT_PAGE_URL } from './data/constants.js';
 import { setGroupMaster, setSupplierMaster, getGroupMasterForDepartment, filterGroup, filterSupplier, suggestGroupByProductName } from './data/masters.js';
 import { suggestClassificationWithGenAI, hasGenAIConfig } from './lib/genaiSuggest.js';
 import { fetchMastersFromSheet } from './lib/sheetsApi.js';
@@ -14,12 +15,15 @@ import { exportXlsx, parseItemSheet } from './lib/excel.js';
 // --- State ---
 let items = [];
 let selectedDepartment = '01';
+let selectedProductType = PRODUCT_TYPE_MANUFACTURER;
 let editingIndex = -1;
 
 // --- DOM ---
 const el = {
   department: document.getElementById('department'),
   departmentWarn: document.getElementById('department-warn'),
+  productType: document.getElementById('productType'),
+  productTypeWarn: document.getElementById('product-type-warn'),
   form: document.getElementById('item-form'),
   productGroup: document.getElementById('productGroup'),
   productGroupCode: document.getElementById('productGroupCode'),
@@ -30,11 +34,13 @@ const el = {
   sizeEng: document.getElementById('sizeEng'),
   sizeTha: document.getElementById('sizeTha'),
   taxRate: document.getElementById('taxRate'),
+  manufacturingLocation: document.getElementById('manufacturingLocation'),
   supplier: document.getElementById('supplier'),
   supplierCode: document.getElementById('supplierCode'),
   supplierList: document.getElementById('supplier-list'),
   unitCost: document.getElementById('unitCost'),
   orderQty: document.getElementById('orderQty'),
+  orderUnit: document.getElementById('orderUnit'),
   leadTime: document.getElementById('leadTime'),
   unitPrice: document.getElementById('unitPrice'),
   salesQty: document.getElementById('salesQty'),
@@ -46,7 +52,12 @@ const el = {
   casePrice: document.getElementById('casePrice'),
   brandEng: document.getElementById('brandEng'),
   brandTha: document.getElementById('brandTha'),
+  pluNo: document.getElementById('pluNo'),
   tbody: document.getElementById('item-tbody'),
+  theadRow: document.getElementById('item-thead-row'),
+  outSecond: document.getElementById('out-second'),
+  outSecondLabel: document.getElementById('out-second-label'),
+  outSecondWrap: document.getElementById('out-second-wrap'),
   selectAll: document.getElementById('select-all'),
   btnDelete: document.getElementById('btn-delete'),
   listMaxWarn: document.getElementById('list-max-warn'),
@@ -66,6 +77,7 @@ const el = {
   btnSuggestClassification: document.getElementById('btn-suggest-classification'),
   suggestSourceMsg: document.getElementById('suggest-source-msg'),
   numpad: document.getElementById('numpad'),
+  tableOrderCol: document.getElementById('table-order-col'),
 };
 
 const errorIds = {
@@ -74,6 +86,8 @@ const errorIds = {
   nameEng: 'err-nameEng',
   nameTha: 'err-nameTha',
   supplier: 'err-supplier',
+  orderUnit: 'err-orderUnit',
+  pluNo: 'err-pluNo',
   caseBarcode: 'err-caseBarcode',
   casePrice: 'err-casePrice',
 };
@@ -93,12 +107,21 @@ async function init() {
     }
   });
 }
-  document.getElementById('btn-lang-ja').addEventListener('click', () => { setLanguage('ja'); refreshDepartmentOptions(); document.querySelectorAll('.lang-btn').forEach((b) => b.classList.remove('active')); document.getElementById('btn-lang-ja').classList.add('active'); });
-  document.getElementById('btn-lang-th').addEventListener('click', () => { setLanguage('th'); refreshDepartmentOptions(); document.querySelectorAll('.lang-btn').forEach((b) => b.classList.remove('active')); document.getElementById('btn-lang-th').classList.add('active'); });
+  function refreshProductTypeOptions() {
+  const lang = getLang();
+  Array.from(el.productType.options).forEach((opt) => {
+    const pt = PRODUCT_TYPES.find((x) => x.value === opt.value);
+    if (pt) opt.textContent = lang === 'ja' ? (pt.nameJa ?? pt.nameTh) : (pt.nameTh ?? pt.nameJa);
+  });
+}
+  document.getElementById('btn-lang-ja').addEventListener('click', () => { setLanguage('ja'); refreshDepartmentOptions(); refreshProductTypeOptions(); applyProductTypeVisibility(); document.querySelectorAll('.lang-btn').forEach((b) => b.classList.remove('active')); document.getElementById('btn-lang-ja').classList.add('active'); });
+  document.getElementById('btn-lang-th').addEventListener('click', () => { setLanguage('th'); refreshDepartmentOptions(); refreshProductTypeOptions(); applyProductTypeVisibility(); document.querySelectorAll('.lang-btn').forEach((b) => b.classList.remove('active')); document.getElementById('btn-lang-th').classList.add('active'); });
 
   fillDepartmentSelect();
+  fillProductTypeSelect();
+  applyProductTypeVisibility();
   setDefaultFormValues();
-  if (el.outputFilename) el.outputFilename.value = getDefaultOutputFilename();
+  if (el.outputFilename) el.outputFilename.value = '';
   toggleCaseFields(Number(el.salesQty?.value || 1) >= 2);
   bindForm();
   bindFocusSelectAll();
@@ -108,6 +131,7 @@ async function init() {
   bindComboProductGroup();
   bindComboSupplier();
   bindDepartmentChange();
+  bindProductTypeChange();
   bindTable();
   bindOutput();
   bindNumpad();
@@ -128,19 +152,95 @@ function fillDepartmentSelect() {
   el.department.value = selectedDepartment;
 }
 
+function fillProductTypeSelect() {
+  if (!el.productType) return;
+  const lang = getLang();
+  el.productType.innerHTML = '';
+  PRODUCT_TYPES.forEach((pt) => {
+    const opt = document.createElement('option');
+    opt.value = pt.value;
+    opt.textContent = lang === 'ja' ? (pt.nameJa ?? pt.nameTh) : (pt.nameTh ?? pt.nameJa);
+    el.productType.appendChild(opt);
+  });
+  el.productType.value = selectedProductType;
+}
+
+/** 商品区分に応じてブロック表示・バーコード読取専用・出力オプションラベルを切り替え */
+function applyProductTypeVisibility() {
+  const app = document.getElementById('app');
+  const isScale = selectedProductType === PRODUCT_TYPE_SCALE;
+  const isRawMaterial = selectedProductType === PRODUCT_TYPE_RAW_MATERIAL;
+  const isManufacturer = selectedProductType === PRODUCT_TYPE_MANUFACTURER;
+  app.classList.toggle('product-type-scale', isScale);
+  app.classList.toggle('product-type-manufacturer', isManufacturer);
+  app.classList.toggle('product-type-raw-material', isRawMaterial);
+
+  document.querySelectorAll('[data-block]').forEach((node) => {
+    const block = node.getAttribute('data-block');
+    if (block === 'manufacturer') node.hidden = !isManufacturer;
+    if (block === 'manufacturer-sales') node.hidden = !isManufacturer;
+    if (block === 'scale') node.hidden = !isScale;
+    if (block === 'trade') node.hidden = isScale;
+    if (block === 'rawMaterial') node.hidden = !isRawMaterial;
+  });
+
+  if (el.barcode) {
+    el.barcode.readOnly = isScale;
+    el.barcode.classList.toggle('readonly', isScale);
+  }
+  if (el.outSecondWrap) el.outSecondWrap.hidden = isRawMaterial;
+  if (isRawMaterial && el.outSecond) el.outSecond.checked = false;
+  if (el.tableOrderCol) {
+    el.tableOrderCol.textContent = isRawMaterial ? t('table.orderUnit') : t('table.orderQty');
+  }
+  if (el.outSecondLabel) el.outSecondLabel.textContent = isScale ? 'Ishida Label' : 'Additional Barcode';
+  updateRequiredFeedback();
+}
+
 function setDefaultFormValues() {
   el.sizeEng.value = DEFAULT_SPEC_ENG;
   el.salesQty.value = String(DEFAULT_SALES_QTY);
   el.taxRate.value = String(DEFAULT_TAX_RATE);
+  if (el.orderQty) el.orderQty.value = '1';
+  if (el.orderUnit) el.orderUnit.value = 'PCS';
+  if (el.manufacturingLocation) el.manufacturingLocation.value = 'instore';
   el.leadTime.value = String(DEFAULT_LEAD_TIME);
 }
 
+function sanitizeFilenamePart(value) {
+  return String(value || '')
+    .replace(/[\\/:*?"<>|]/g, '')
+    .replace(/\s+/g, '_')
+    .trim();
+}
+
+function formatDateTimeForFilename(date = new Date()) {
+  const yyyy = String(date.getFullYear());
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  const hh = String(date.getHours()).padStart(2, '0');
+  const min = String(date.getMinutes()).padStart(2, '0');
+  const sec = String(date.getSeconds()).padStart(2, '0');
+  return `${yyyy}${mm}${dd}_${hh}${min}${sec}`;
+}
+
+function getDepartmentNameForFilename(departmentCode) {
+  const dept = DEPARTMENTS.find((d) => d.code === departmentCode);
+  if (!dept) return departmentCode || 'department';
+  return dept.nameEn || departmentCode;
+}
+
+function buildDefaultOutputFilename(departmentCode = selectedDepartment) {
+  const name = sanitizeFilenamePart(getDepartmentNameForFilename(departmentCode));
+  return `${name}_${formatDateTimeForFilename()}.xlsx`;
+}
+
 function bindForm() {
-  /** Enter で次へ進む順（推測ボタンは含めず、分類→規格英語→…→ブランド泰→入力完了） */
+  /** Enter で次へ進む順（推測ボタンは含めず。計量器時は取引・販売は非表示のため offsetParent でスキップ） */
   const ENTER_FOCUS_ORDER = [
     'barcode', 'nameEng', 'nameTha', 'productGroup',
-    'sizeEng', 'sizeTha', 'taxRate', 'supplier',
-    'unitCost', 'orderQty', 'leadTime', 'unitPrice', 'salesQty',
+    'sizeEng', 'sizeTha', 'taxRate', 'manufacturingLocation', 'pluNo',
+    'supplier', 'unitCost', 'orderQty', 'orderUnit', 'leadTime', 'unitPrice', 'salesQty',
     'caseBarcode', 'caseName', 'caseSizeEng', 'caseSizeTha', 'casePrice',
     'brandEng', 'brandTha',
   ];
@@ -170,7 +270,7 @@ function bindForm() {
       ? items.filter((_, i) => i !== editingIndex).map((it) => it.barcode).filter(Boolean)
       : items.map((it) => it.barcode).filter(Boolean);
     const fields = getFormData();
-    const errors = validateFormFields(fields, existingBarcodes);
+    const errors = validateFormFields(fields, existingBarcodes, selectedProductType);
     clearFieldErrors();
     if (Object.keys(errors).length > 0) {
       applyFieldErrors(errors);
@@ -185,6 +285,8 @@ function bindForm() {
       const prev = items[editingIndex];
       if (prev._rawItemRow) item._rawItemRow = prev._rawItemRow;
       if (prev.itemNo !== undefined) item.itemNo = prev.itemNo;
+      if (prev.barcodeType !== undefined && item.barcodeType === undefined) item.barcodeType = prev.barcodeType;
+      if (selectedProductType === PRODUCT_TYPE_SCALE && prev.pluNo !== undefined) item.pluNo = item.pluNo || prev.pluNo;
       items[editingIndex] = item;
       editingIndex = -1;
       el.btnAdd.textContent = t('btn.add');
@@ -220,10 +322,13 @@ function getFormData() {
     sizeEng: el.sizeEng.value.trim() || DEFAULT_SPEC_ENG,
     sizeTha: el.sizeTha.value.trim(),
     taxRate: el.taxRate.value,
+    manufacturingLocation: el.manufacturingLocation?.value || 'instore',
+    pluNo: el.pluNo ? el.pluNo.value.trim() : '',
     supplier: el.supplier.value.trim(),
     supplierCode: el.supplierCode.value.trim(),
     unitCost: el.unitCost.value,
     orderQty: el.orderQty.value,
+    orderUnit: el.orderUnit?.value || 'PCS',
     leadTime: el.leadTime.value,
     unitPrice: el.unitPrice.value,
     salesQty: el.salesQty.value,
@@ -238,22 +343,28 @@ function getFormData() {
 }
 
 function formDataToItem(f) {
-  return {
+  const isRawMaterial = selectedProductType === PRODUCT_TYPE_RAW_MATERIAL;
+  const barcode = f.barcode != null ? String(f.barcode).trim() : '';
+  const item = {
     productGroupCode: f.productGroupCode || f.productGroup,
     productGroup: f.productGroup || f.productGroupCode,
-    barcode: f.barcode,
+    barcode,
+    barcodeType: (!barcode || barcode.startsWith('20')) ? 'PLU' : undefined,
     nameEng: f.nameEng,
     nameTha: f.nameTha,
     sizeEng: f.sizeEng || DEFAULT_SPEC_ENG,
     sizeTha: f.sizeTha,
     taxRate: f.taxRate,
+    manufacturingLocation: f.manufacturingLocation === 'ckpc' ? 'ckpc' : 'instore',
+    pluNo: f.pluNo != null ? String(f.pluNo).trim() : '',
     supplierCode: f.supplierCode || f.supplier,
     supplier: f.supplier || f.supplierCode,
     unitCost: f.unitCost !== '' ? Number(f.unitCost) : undefined,
-    orderQty: f.orderQty !== '' ? Number(f.orderQty) : 1,
+    orderQty: !isRawMaterial && f.orderQty !== '' ? Number(f.orderQty) : 1,
+    orderUnit: isRawMaterial ? (f.orderUnit || 'PCS') : 'PCS',
     leadTime: f.leadTime !== '' ? Number(f.leadTime) : DEFAULT_LEAD_TIME,
-    unitPrice: f.unitPrice !== '' ? Number(f.unitPrice) : undefined,
-    salesQty: f.salesQty !== '' ? Number(f.salesQty) : DEFAULT_SALES_QTY,
+    unitPrice: !isRawMaterial && f.unitPrice !== '' ? Number(f.unitPrice) : undefined,
+    salesQty: !isRawMaterial && f.salesQty !== '' ? Number(f.salesQty) : DEFAULT_SALES_QTY,
     caseBarcode: f.caseBarcode,
     caseName: f.caseName || '',
     caseSizeEng: f.caseSizeEng || '',
@@ -262,6 +373,7 @@ function formDataToItem(f) {
     brandEng: f.brandEng,
     brandTha: f.brandTha,
   };
+  return item;
 }
 
 /**
@@ -275,9 +387,11 @@ function resetForm(preserveSupplier = false) {
   el.productGroupCode.value = '';
   el.supplierCode.value = keepSupplierCode;
   el.supplier.value = keepSupplierDisplay;
+  if (el.pluNo) el.pluNo.value = '';
   editingIndex = -1;
   el.btnAdd.textContent = t('btn.add');
   toggleCaseFields(Number(el.salesQty.value) >= 2);
+  applyProductTypeVisibility();
   updateRequiredFeedback();
   renderTable(); // 編集行のハイライトを外す
 }
@@ -310,7 +424,47 @@ function applyFieldErrors(errors) {
 
 /** 必須項目の入力状態に応じて枠線色・ボタン有効化を更新 */
 function updateRequiredFeedback() {
-  const caseVisible = !el.caseFields.hidden;
+  const isScale = selectedProductType === PRODUCT_TYPE_SCALE;
+  const isRawMaterial = selectedProductType === PRODUCT_TYPE_RAW_MATERIAL;
+  const caseVisible = !isScale && !isRawMaterial && !el.caseFields.hidden;
+  if (isScale) {
+    // 呼出番号は1回目インポート後入力のため、必須表示はしない
+    [el.nameEng, el.productGroup, el.sizeEng].forEach((input) => {
+      if (!input) return;
+      const filled = input === el.productGroup
+        ? (el.productGroupCode?.value || el.productGroup?.value || '').trim() !== ''
+        : input === el.sizeEng
+          ? String(el.sizeEng?.value || '').trim() !== ''
+          : String(el.nameEng?.value || '').trim() !== '';
+      input.classList.toggle('input-required--filled', filled);
+    });
+    if (el.barcode) el.barcode.classList.toggle('input-required--filled', true);
+    if (el.taxRate) el.taxRate.classList.toggle('input-required--filled', true);
+    if (el.pluNo) el.pluNo.classList.toggle('input-required--filled', String(el.pluNo?.value || '').trim() !== '');
+    el.btnAdd.disabled = !allRequiredFilled();
+    return;
+  }
+  if (isRawMaterial) {
+    const requiredInputs = [
+      { el: el.nameEng, filled: () => String(el.nameEng?.value || '').trim() !== '' },
+      { el: el.productGroup, filled: () => String(el.productGroupCode?.value || el.productGroup?.value || '').trim() !== '' },
+      { el: el.sizeEng, filled: () => String(el.sizeEng?.value || '').trim() !== '' },
+      { el: el.taxRate, filled: () => true },
+      { el: el.supplier, filled: () => String(el.supplierCode?.value || el.supplier?.value || '').trim() !== '' },
+      { el: el.unitCost, filled: () => (el.unitCost?.value ?? '') !== '' },
+      { el: el.orderUnit, filled: () => String(el.orderUnit?.value || '').trim() !== '' },
+    ];
+    if (el.barcode) {
+      // 原材料: バーコードは任意入力
+      el.barcode.classList.toggle('input-required--filled', true);
+    }
+    requiredInputs.forEach(({ el, filled }) => {
+      if (!el) return;
+      el.classList.toggle('input-required--filled', filled());
+    });
+    el.btnAdd.disabled = !allRequiredFilled();
+    return;
+  }
   const requiredInputs = [
     { el: el.barcode, filled: () => String(el.barcode?.value || '').trim() !== '' },
     { el: el.nameEng, filled: () => String(el.nameEng?.value || '').trim() !== '' },
@@ -340,6 +494,24 @@ function updateRequiredFeedback() {
 }
 
 function allRequiredFilled() {
+  const isScale = selectedProductType === PRODUCT_TYPE_SCALE;
+  const isRawMaterial = selectedProductType === PRODUCT_TYPE_RAW_MATERIAL;
+  if (isScale) {
+    // 呼出番号は1回目インポート後に入力するため、初回登録時は必須にしない
+    if (String(el.nameEng?.value || '').trim() === '') return false;
+    if ((el.productGroupCode?.value || el.productGroup?.value || '').trim() === '') return false;
+    if (String(el.sizeEng?.value || '').trim() === '') return false;
+    return true;
+  }
+  if (isRawMaterial) {
+    if (String(el.nameEng?.value || '').trim() === '') return false;
+    if (String(el.productGroupCode?.value || el.productGroup?.value || '').trim() === '') return false;
+    if (String(el.sizeEng?.value || '').trim() === '') return false;
+    if (String(el.supplierCode?.value || el.supplier?.value || '').trim() === '') return false;
+    if ((el.unitCost?.value ?? '') === '') return false;
+    if (String(el.orderUnit?.value || '').trim() === '') return false;
+    return true;
+  }
   const caseVisible = !el.caseFields.hidden;
   if (String(el.barcode?.value || '').trim() === '') return false;
   if (String(el.nameEng?.value || '').trim() === '') return false;
@@ -547,6 +719,22 @@ function bindDepartmentChange() {
   });
 }
 
+function bindProductTypeChange() {
+  if (!el.productType) return;
+  el.productType.addEventListener('change', () => {
+    if (items.length > 0) {
+      el.productTypeWarn.textContent = t('error.productTypeLocked');
+      el.productType.value = selectedProductType;
+      return;
+    }
+    el.productTypeWarn.textContent = '';
+    selectedProductType = el.productType.value;
+    applyProductTypeVisibility();
+    renderTable();
+    updateExportButtonState();
+  });
+}
+
 /** 部門変更後: 現在の分類・仕入先が選択部門に属さない場合はクリア */
 function clearComboSelectionsIfInvalid() {
   const groups = getGroupMasterForDepartment(selectedDepartment);
@@ -602,6 +790,15 @@ function bindTable() {
     el.tbody.querySelectorAll('tr').forEach((tr, i) => {
       if (tr.querySelector('input[type="checkbox"]')?.checked) indexes.push(i);
     });
+    if (indexes.length === 0) return;
+    if (editingIndex >= 0) {
+      if (indexes.includes(editingIndex)) {
+        resetForm(true);
+      } else {
+        const removedBefore = indexes.filter((idx) => idx < editingIndex).length;
+        editingIndex -= removedBefore;
+      }
+    }
     indexes.sort((a, b) => b - a).forEach((i) => items.splice(i, 1));
     renderTable();
   });
@@ -609,11 +806,14 @@ function bindTable() {
 
 function updateExportButtonState() {
   if (!el.btnExport) return;
-  const errs = validateForExport(items, selectedDepartment);
+  const isScale = selectedProductType === PRODUCT_TYPE_SCALE;
+  const requirePluForScale = isScale && el.outSecond?.checked;
+  const errs = validateForExport(items, selectedDepartment, selectedProductType, { requirePluForScale });
   el.btnExport.disabled = errs.length > 0;
 }
 
 function renderTable() {
+  const isRawMaterial = selectedProductType === PRODUCT_TYPE_RAW_MATERIAL;
   el.tbody.innerHTML = '';
   items.forEach((item, i) => {
     const tr = document.createElement('tr');
@@ -625,10 +825,11 @@ function renderTable() {
       <td class="cell-name" title="${escapeHtml(item.nameEng || '')}">${escapeHtml((item.nameEng || '').slice(0, 50))}${(item.nameEng || '').length > 50 ? '…' : ''}</td>
       <td class="cell-name" title="${escapeHtml(item.nameTha || '')}">${escapeHtml((item.nameTha || '').slice(0, 50))}${(item.nameTha || '').length > 50 ? '…' : ''}</td>
       <td>${escapeHtml(item.productGroupCode || '')}</td>
-      <td class="cell-name" title="${escapeHtml(item.supplier || item.supplierCode || '')}">${escapeHtml((item.supplier || item.supplierCode || '').slice(0, 30))}${(item.supplier || item.supplierCode || '').length > 30 ? '…' : ''}</td>
-      <td>${item.orderQty != null ? item.orderQty : ''}</td>
-      <td>${item.unitCost != null ? item.unitCost : ''}</td>
-      <td>${item.unitPrice != null ? item.unitPrice : ''}</td>
+      <td class="col-plu">${escapeHtml(item.pluNo != null ? item.pluNo : '')}</td>
+      <td class="col-supplier cell-name" title="${escapeHtml(item.supplier || item.supplierCode || '')}">${escapeHtml((item.supplier || item.supplierCode || '').slice(0, 30))}${(item.supplier || item.supplierCode || '').length > 30 ? '…' : ''}</td>
+      <td class="col-orderQty">${escapeHtml(String(isRawMaterial ? (item.orderUnit || '') : (item.orderQty != null ? item.orderQty : '')))}</td>
+      <td class="col-cost">${item.unitCost != null ? item.unitCost : ''}</td>
+      <td class="col-price">${item.unitPrice != null ? item.unitPrice : ''}</td>
     `;
     const startEdit = (e) => {
       if (e.target.closest('input[type="checkbox"]')) return;
@@ -660,10 +861,12 @@ function fillForm(item) {
   el.sizeEng.value = item.sizeEng || DEFAULT_SPEC_ENG;
   el.sizeTha.value = item.sizeTha || '';
   el.taxRate.value = item.taxRate ?? String(DEFAULT_TAX_RATE);
+  if (el.manufacturingLocation) el.manufacturingLocation.value = item.manufacturingLocation === 'ckpc' ? 'ckpc' : 'instore';
   el.supplierCode.value = item.supplierCode || '';
   el.supplier.value = item.supplier || item.supplierCode || '';
   el.unitCost.value = item.unitCost != null ? item.unitCost : '';
   el.orderQty.value = item.orderQty != null ? item.orderQty : '';
+  if (el.orderUnit) el.orderUnit.value = item.orderUnit || 'PCS';
   el.leadTime.value = item.leadTime != null ? item.leadTime : DEFAULT_LEAD_TIME;
   el.unitPrice.value = item.unitPrice != null ? item.unitPrice : '';
   el.salesQty.value = item.salesQty != null ? item.salesQty : DEFAULT_SALES_QTY;
@@ -674,7 +877,9 @@ function fillForm(item) {
   el.casePrice.value = item.casePrice != null ? item.casePrice : '';
   el.brandEng.value = item.brandEng || '';
   el.brandTha.value = item.brandTha || '';
+  if (el.pluNo) el.pluNo.value = item.pluNo != null ? item.pluNo : '';
   toggleCaseFields(Number(el.salesQty.value) >= 2);
+  applyProductTypeVisibility();
   updateRequiredFeedback();
 }
 
@@ -695,8 +900,13 @@ function hideExportSuccessModal() {
 }
 
 function bindOutput() {
+  if (el.outItem) el.outItem.addEventListener('change', updateExportButtonState);
+  if (el.outSecond) el.outSecond.addEventListener('change', updateExportButtonState);
   el.btnExport.addEventListener('click', () => {
-    const errs = validateForExport(items, selectedDepartment);
+    const isScale = selectedProductType === PRODUCT_TYPE_SCALE;
+    const isRawMaterial = selectedProductType === PRODUCT_TYPE_RAW_MATERIAL;
+    const requirePluForScale = isScale && el.outSecond?.checked;
+    const errs = validateForExport(items, selectedDepartment, selectedProductType, { requirePluForScale });
     if (errs.length > 0) {
       el.exportErrors.hidden = false;
       const prefix = getLang() === 'ja' ? '出力できません: ' : 'Cannot export: ';
@@ -707,8 +917,10 @@ function bindOutput() {
     const name = el.outputFilename.value.trim();
     exportXlsx(items, selectedDepartment, {
       sheetItem: el.outItem.checked,
-      sheetAdditional: el.outAdditional.checked,
-      filename: name || undefined,
+      sheetAdditional: !isScale && !isRawMaterial && el.outSecond?.checked,
+      sheetIshida: isScale && el.outSecond?.checked,
+      productType: selectedProductType,
+      filename: name || buildDefaultOutputFilename(selectedDepartment),
     });
     showExportSuccessModal();
   });
@@ -741,10 +953,10 @@ function bindOutput() {
           el.exportErrors.textContent = getLang() === 'ja' ? '有効なItemシートがありません' : 'No valid Item sheet';
           return;
         }
-        const existing = new Set(items.map((it) => it.barcode));
-        const toAdd = parsed.filter((it) => it.barcode && !existing.has(it.barcode));
-        toAdd.forEach((it) => existing.add(it.barcode));
-        items = items.concat(toAdd);
+        // インポート時は既存リストを全置換する
+        items = parsed.slice();
+        editingIndex = -1;
+        el.btnAdd.textContent = t('btn.add');
         renderTable();
         el.exportErrors.hidden = true;
       } catch (err) {

@@ -30,6 +30,16 @@ export const DEFAULT_SALES_QTY = 1;
 export const DEFAULT_TAX_RATE = 7;
 export const DEFAULT_LEAD_TIME = 2;
 
+/** 製造場所（計量器のみ）: 店舗→FINISHED-INSTORE, CK/PC→FINISHED-CK/PC */
+export const MANUFACTURING_LOCATION_INSTORE = 'instore';
+export const MANUFACTURING_LOCATION_CKPC = 'ckpc';
+export const POSTING_GROUP_INSTORE = 'FINISHED-INSTORE';
+export const POSTING_GROUP_CKPC = 'FINISHED-CK/PC';
+
+/** メーカーバーコード: 食品部門(01)→TRADE、それ以外→TRADE-NON（Inventory / Gen. Prod. Posting Group） */
+export const POSTING_GROUP_TRADE = 'TRADE';
+export const POSTING_GROUP_TRADE_NON = 'TRADE-NON';
+
 /** 出力ファイル名のデフォルト（日付付き） */
 export function getDefaultOutputFilename() {
   const yyyy = new Date().getFullYear();

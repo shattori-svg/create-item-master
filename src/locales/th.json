@@ -3,6 +3,8 @@
     "required": "บังคับ",
     "optional": "ไม่บังคับ",
     "department": "แผนก",
+    "productType": "ประเภทสินค้า",
+    "pluNo": "หมายเลขเรียก (PLU)",
     "classification": "รหัสหมวดหมู่",
     "barcode": "บาร์โค้ด",
     "nameEng": "ชื่อสินค้า (อังกฤษ)",
@@ -10,9 +12,11 @@
     "sizeEng": "ขนาด (อังกฤษ)",
     "sizeTha": "ขนาด (ไทย)",
     "taxRate": "อัตราภาษี",
+    "manufacturingLocation": "สถานที่ผลิต",
     "supplier": "ผู้จัดส่ง",
     "unitCost": "ต้นทุน",
     "orderQty": "จำนวนสั่งซื้อ",
+    "orderUnit": "หน่วยสั่งซื้อ",
     "leadTime": "ระยะเวลานำ (วัน)",
     "unitPrice": "ราคาขาย",
     "salesQty": "จำนวนขาย",
@@ -25,6 +29,13 @@
     "brandTha": "แบรนด์ (ไทย)",
     "outputFilename": "ชื่อไฟล์"
   },
+  "option": {
+    "manufacturingLocationInstore": "ร้านค้า",
+    "manufacturingLocationCkpc": "CK/PC",
+    "orderUnitPcs": "PCS",
+    "orderUnitCtn": "CTN",
+    "orderUnitKg": "KG"
+  },
   "legend": {
     "required": "บังคับ",
     "optional": "ไม่บังคับ"
@@ -32,7 +43,8 @@
   "step": {
     "basic": "ข้อมูลพื้นฐาน",
     "trade": "ข้อมูลการซื้อขาย",
-    "sales": "ข้อมูลการขาย"
+    "sales": "ข้อมูลการขาย",
+    "scaleInfo": "ข้อมูลเครื่องชั่ง"
   },
   "title": {
     "itemList": "รายการสินค้าที่ป้อน"
@@ -42,8 +54,10 @@
     "nameEng": "ชื่อ(อังกฤษ)",
     "nameTha": "ชื่อ(ไทย)",
     "group": "หมวดหมู่",
+    "pluNo": "หมายเลขเรียก",
     "supplier": "ผู้จัดส่ง",
     "orderQty": "จำนวนสั่งซื้อ",
+    "orderUnit": "หน่วยสั่งซื้อ",
     "cost": "ต้นทุน",
     "price": "ราคา",
     "action": "ดำเนินการ"
@@ -62,6 +76,7 @@
   },
   "error": {
     "required": "กรุณากรอก",
+    "pluNoRequired": "กรุณากรอกหมายเลขเรียก (PLU)",
     "barcodeDuplicate": "บาร์โค้ดนี้มีในรายการแล้ว",
     "barcodeInvalid": "รูปแบบบาร์โค้ดไม่ถูกต้อง (GS-1)",
     "barcodeCheckDigit": "ตัวเลขตรวจสอบบาร์โค้ดไม่ถูกต้อง",
@@ -69,6 +84,7 @@
     "numeric": "กรุณากรอกตัวเลข",
     "listMax": "รายการสูงสุด 100 รายการ",
     "departmentLocked": "ไม่สามารถเปลี่ยนแผนกเมื่อมีสินค้าในรายการ กรุณาล้างรายการก่อน",
+    "productTypeLocked": "ไม่สามารถเปลี่ยนประเภทสินค้าเมื่อมีสินค้าในรายการ",
     "caseRequired": "เมื่อจำนวนขายตั้งแต่ 2 ขึ้นไป กรุณากรอกบาร์โค้ดกล่องและราคาขายกล่อง"
   },
   "msg": {

@@ -3,6 +3,8 @@
     "required": "必須",
     "optional": "任意",
     "department": "部門",
+    "productType": "商品区分",
+    "pluNo": "呼出番号",
     "classification": "分類コード",
     "barcode": "バーコード",
     "nameEng": "商品名（英語）",
@@ -10,9 +12,11 @@
     "sizeEng": "規格（英語）",
     "sizeTha": "規格（タイ）",
     "taxRate": "税率",
+    "manufacturingLocation": "製造場所",
     "supplier": "仕入先",
     "unitCost": "原価",
     "orderQty": "発注入数",
+    "orderUnit": "発注単位",
     "leadTime": "発注リードタイム（日）",
     "unitPrice": "売価",
     "salesQty": "販売入数",
@@ -25,6 +29,13 @@
     "brandTha": "ブランド（タイ）",
     "outputFilename": "ファイル名"
   },
+  "option": {
+    "manufacturingLocationInstore": "店舗",
+    "manufacturingLocationCkpc": "CK/PC",
+    "orderUnitPcs": "PCS",
+    "orderUnitCtn": "CTN",
+    "orderUnitKg": "KG"
+  },
   "legend": {
     "required": "必須項目",
     "optional": "任意項目"
@@ -32,7 +43,8 @@
   "step": {
     "basic": "基本情報",
     "trade": "取引情報",
-    "sales": "販売情報"
+    "sales": "販売情報",
+    "scaleInfo": "計量器情報"
   },
   "title": {
     "itemList": "入力済み商品リスト"
@@ -42,14 +54,17 @@
     "nameEng": "商品名(英)",
     "nameTha": "商品名(泰)",
     "group": "分類",
+    "pluNo": "呼出番号",
     "supplier": "仕入先",
     "orderQty": "発注入数",
+    "orderUnit": "発注単位",
     "cost": "原価",
     "price": "売価",
     "action": "操作"
   },
   "error": {
     "required": "入力してください",
+    "pluNoRequired": "呼出番号を入力してください",
     "barcodeDuplicate": "このバーコードは既にリストに登録されています",
     "barcodeInvalid": "バーコードの形式が正しくありません（GS-1）",
     "barcodeCheckDigit": "バーコードのチェックディジットが正しくありません",
@@ -57,6 +72,7 @@
     "numeric": "数値を入力してください",
     "listMax": "リストは最大100件までです",
     "departmentLocked": "リストに商品がある間は部門を変更できません。変更する場合はリストを空にしてください。",
+    "productTypeLocked": "リストに商品がある間は商品区分を変更できません。",
     "caseRequired": "販売入数が2以上のときはケースJANコード・ケース売価を入力してください"
   },
   "msg": {

@@ -2,7 +2,17 @@
  * Excel 読み書き・Item / Additional Barcode マッピング（基本設計書 6）
  */
 import * as XLSX from 'xlsx';
-import { ITEM_FIXED, TAX_VAT07, TAX_ZERO } from '../data/constants.js';
+import { ITEM_FIXED, TAX_VAT07, TAX_ZERO, POSTING_GROUP_INSTORE, POSTING_GROUP_CKPC, POSTING_GROUP_TRADE, POSTING_GROUP_TRADE_NON } from '../data/constants.js';
+
+/** 計量器: 製造場所に応じて FINISHED-INSTORE / FINISHED-CK/PC */
+function getPostingGroupByLocation(manufacturingLocation) {
+  return manufacturingLocation === 'ckpc' ? POSTING_GROUP_CKPC : POSTING_GROUP_INSTORE;
+}
+
+/** メーカーバーコード: 食品部門(01)→TRADE、それ以外→TRADE-NON */
+function getPostingGroupByDepartment(departmentCode) {
+  return departmentCode === '01' ? POSTING_GROUP_TRADE : POSTING_GROUP_TRADE_NON;
+}
 
 const ITEM_HEADERS = [
   'Department Code', 'Product Group Code', 'Barcode Type', 'Barcode No.', 'Item No.',
@@ -26,15 +36,39 @@ const ADDITIONAL_HEADERS = [
   'Height', 'Width', 'Length', 'Weight', 'Unit Cost', 'Unit Price'
 ];
 
-/** フォームで編集する列のインデックス（これ以外は _rawItemRow をそのまま保持） */
-const ITEM_MANAGED_INDICES = [0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 23, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41];
+/** 計量器販売用 Ishida Label シートヘッダー（Item_260309 1105.xlsx 準拠） */
+const ISHIDA_LABEL_HEADERS = [
+  'Barcode No.', 'Ishida PLU No.', 'Ishida Description (ENG)', 'Ishida Description (THA)',
+  'Ishida Logo No.', 'Print Packing Date', 'Expiration Days',
+  'Ingredient Line 1', 'Ingredient Line 2', 'Ingredient Line 3', 'Ingredient Line 4', 'Ingredient Line 5', 'Ingredient Line 6'
+];
 
-function itemToRow(item, departmentCode) {
+/** フォームで編集する列のインデックス（これ以外は _rawItemRow をそのまま保持） */
+const ITEM_MANAGED_INDICES = [0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41];
+
+function itemToRow(item, departmentCode, options = {}) {
+  const { productType = 'manufacturer' } = options;
   const vat = String(item.taxRate) === '7' ? TAX_VAT07 : TAX_ZERO;
+  const barcode = item.barcode != null ? String(item.barcode).trim() : '';
+  const barcodeType = item.barcodeType
+    ? String(item.barcodeType)
+    : (!barcode || barcode.startsWith('20') ? 'PLU' : ITEM_FIXED.barcodeType);
+  const postingGroup = productType === 'rawMaterial'
+    ? 'MATERIAL'
+    : getPostingGroupByDepartment(departmentCode);
+  const inventoryType = productType === 'rawMaterial'
+    ? 'Non-Inventory'
+    : ITEM_FIXED.inventoryType;
+  const baseUnitOfMeasure = productType === 'rawMaterial'
+    ? (item.orderUnit || ITEM_FIXED.baseUnitOfMeasure)
+    : ITEM_FIXED.baseUnitOfMeasure;
+  const unitPrice = productType === 'rawMaterial'
+    ? 0
+    : (item.unitPrice != null ? Number(item.unitPrice) : '');
   const values = [
     departmentCode,
     item.productGroupCode || '',
-    ITEM_FIXED.barcodeType,
+    barcodeType,
     item.barcode || '',
     null, // 4: Item No. は上書きしない（下で _raw から維持）
     item.nameEng || '',
@@ -43,18 +77,18 @@ function itemToRow(item, departmentCode) {
     item.nameEng || '',
     item.nameTha || '',
     '',
-    ITEM_FIXED.baseUnitOfMeasure,
+    baseUnitOfMeasure,
     item.sizeEng ?? '1pcs',
     item.sizeTha || '',
     '',
     ITEM_FIXED.height, ITEM_FIXED.width, ITEM_FIXED.length, ITEM_FIXED.weight,
-    ITEM_FIXED.inventoryType, ITEM_FIXED.inventoryPostingGroup, ITEM_FIXED.genProdPostingGroup, vat,
+    inventoryType, postingGroup, postingGroup, vat,
     item.supplierCode || '', // 23: Vendor No. (default)
     null, // 24: Vendor Item No. (default) は上書きしない
     item.unitCost != null ? Number(item.unitCost) : '', // 25: Unit Cost (default)
     ITEM_FIXED.autoReplenishment,
     item.leadTime != null ? Number(item.leadTime) : 2,
-    item.unitPrice != null ? Number(item.unitPrice) : '',
+    unitPrice,
     ITEM_FIXED.weightPrice,
     ITEM_FIXED.keyingInPrice, ITEM_FIXED.keyingInQuantity, ITEM_FIXED.zeroPriceValid, ITEM_FIXED.noDiscountAllowed, ITEM_FIXED.blocked,
     '', '', '',
@@ -72,7 +106,6 @@ function itemToRow(item, departmentCode) {
   }
   const out = values.slice();
   out[4] = item.itemNo ?? '';
-  out[21] = out[22] = '';
   out[24] = '';
   return out;
 }
@@ -130,9 +163,63 @@ function itemToAdditionalRows(item) {
   return rows;
 }
 
-export function buildItemSheet(items, departmentCode) {
-  const rows = items.map((it) => itemToRow(it, departmentCode));
+/** 計量器販売商品用の Item 行（Price-embedded, Non-Inventory, FINISHED-INSTORE） */
+function itemToRowScale(item, departmentCode) {
+  const vat = String(item.taxRate) === '7' ? TAX_VAT07 : TAX_ZERO;
+  return [
+    departmentCode,
+    item.productGroupCode || '',
+    'Price-embedded',
+    item.barcode || '',
+    item.itemNo ?? '',
+    item.nameEng || '',
+    item.nameTha || '',
+    '',
+    item.nameEng || '',
+    item.nameTha || '',
+    '',
+    'PCS',
+    item.sizeEng ?? '1pcs',
+    item.sizeTha || '',
+    '',
+    0, 0, 0, 0,
+    'Non-Inventory',
+    getPostingGroupByLocation(item.manufacturingLocation),
+    getPostingGroupByLocation(item.manufacturingLocation),
+    vat,
+    '', '', 0, '0', '', 0, 0,
+    'Not Mandatory', 'Not Mandatory', 0, 0, 0,
+    '', '', '',
+    item.brandEng || '', item.brandTha || '', '',
+    '', '', '', '', '', '', ''
+  ];
+}
+
+/** 計量器販売用 Ishida Label シート 1行 */
+function itemToIshidaLabelRow(item) {
+  return [
+    item.barcode || '',
+    item.pluNo ?? '',
+    item.nameEng || '',
+    item.nameTha || '',
+    '',
+    '4',
+    '2',
+    '', '', '', '', '', ''
+  ];
+}
+
+export function buildItemSheet(items, departmentCode, options = {}) {
+  const { productType = 'manufacturer' } = options;
+  const rows = productType === 'scale'
+    ? items.map((it) => itemToRowScale(it, departmentCode))
+    : items.map((it) => itemToRow(it, departmentCode, { productType }));
   return [ITEM_HEADERS, ...rows];
+}
+
+export function buildIshidaLabelSheet(items) {
+  const rows = items.map((it) => itemToIshidaLabelRow(it));
+  return [ISHIDA_LABEL_HEADERS, ...rows];
 }
 
 export function buildAdditionalBarcodeSheet(items) {
@@ -144,15 +231,19 @@ export function buildAdditionalBarcodeSheet(items) {
 }
 
 export function exportXlsx(items, departmentCode, options = {}) {
-  const { sheetItem = true, sheetAdditional = true, filename } = options;
+  const { sheetItem = true, sheetAdditional = true, sheetIshida = false, productType = 'manufacturer', filename } = options;
   const wb = XLSX.utils.book_new();
 
   if (sheetItem) {
-    const itemData = buildItemSheet(items, departmentCode);
+    const itemData = buildItemSheet(items, departmentCode, { productType });
     const wsItem = XLSX.utils.aoa_to_sheet(itemData);
     XLSX.utils.book_append_sheet(wb, wsItem, 'Item');
   }
-  if (sheetAdditional) {
+  if (productType === 'scale' && sheetIshida) {
+    const ishidaData = buildIshidaLabelSheet(items);
+    const wsIshida = XLSX.utils.aoa_to_sheet(ishidaData);
+    XLSX.utils.book_append_sheet(wb, wsIshida, 'Ishida Label');
+  } else if (productType === 'manufacturer' && sheetAdditional) {
     const addData = buildAdditionalBarcodeSheet(items);
     const wsAdd = XLSX.utils.aoa_to_sheet(addData);
     XLSX.utils.book_append_sheet(wb, wsAdd, 'Additional Barcode');
@@ -202,9 +293,31 @@ function parseAdditionalOrderQtyMap(wb) {
   return orderQtyByBase;
 }
 
+/** Ishida Label シートから Barcode No. → Ishida PLU No. のマップを取得 */
+function parseIshidaPluMap(wb) {
+  const sheet = wb.Sheets['Ishida Label'];
+  if (!sheet) return {};
+  const data = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+  if (data.length < 2) return {};
+  const headers = data[0].map((h) => (h != null ? String(h).trim() : ''));
+  const map = {};
+  headers.forEach((h, i) => { map[h] = i; });
+  const barcodeCol = map['Barcode No.'];
+  const pluCol = map['Ishida PLU No.'];
+  if (barcodeCol == null || pluCol == null) return {};
+  const pluByBarcode = {};
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    const barcode = (row[barcodeCol] != null ? String(row[barcodeCol]).trim() : '');
+    const plu = (row[pluCol] != null ? String(row[pluCol]).trim() : '');
+    if (barcode) pluByBarcode[barcode] = plu;
+  }
+  return pluByBarcode;
+}
+
 /**
  * Item シートからリスト用オブジェクトを復元（基本設計書 6.3）
- * インポート時は _rawItemRow で行全体を保持し、再出力時に Item No. 等の整合性を保つ
+ * Ishida Label シートがあれば PLU No. を付与。インポート時は _rawItemRow で行全体を保持
  */
 export function parseItemSheet(buffer) {
   const wb = XLSX.read(buffer, { type: 'array' });
@@ -217,13 +330,16 @@ export function parseItemSheet(buffer) {
   headers.forEach((h, i) => { map[h] = i; });
   const deptCol = map['Department Code'];
   const groupCol = map['Product Group Code'];
+  const barcodeTypeCol = map['Barcode Type'];
   const barcodeCol = map['Barcode No.'];
   const itemNoCol = map['Item No.'];
   const nameEngCol = map['Description (ENG)'];
   const nameThaCol = map['Description (THA)'];
   const sizeEngCol = map['Size Specification (ENG)'];
   const sizeThaCol = map['Size Specification (THA)'];
+  const baseUomCol = map['Base Unit of Measure'];
   const vatCol = map['VAT Prod. Posting Group'];
+  const genProdCol = map['Gen. Prod. Posting Group'];
   const vendorCol = map['Vendor No. (default)'];
   const costCol = map['Unit Cost (default)'];
   const priceCol = map['Unit Price (default)'];
@@ -232,6 +348,7 @@ export function parseItemSheet(buffer) {
   const brandThaCol = map['Brand (THA)'];
 
   const orderQtyByBase = parseAdditionalOrderQtyMap(wb);
+  const pluByBarcode = parseIshidaPluMap(wb);
 
   const items = [];
   for (let i = 1; i < data.length; i++) {
@@ -240,6 +357,7 @@ export function parseItemSheet(buffer) {
     const getNum = (col) => (col != null && row[col] !== '' ? Number(row[col]) : undefined);
     if (!get(barcodeCol)) continue;
     const barcode = get(barcodeCol);
+    const importedBarcodeType = get(barcodeTypeCol);
     const rawRow = ITEM_HEADERS.map((h) => {
       const col = map[h];
       return col != null && row[col] !== undefined && row[col] !== null ? row[col] : '';
@@ -250,16 +368,23 @@ export function parseItemSheet(buffer) {
       productGroupCode: get(groupCol),
       productGroup: get(groupCol),
       barcode,
+      barcodeType: barcode.startsWith('20') ? 'PLU' : importedBarcodeType,
       itemNo: get(itemNoCol),
+      pluNo: pluByBarcode[barcode] ?? '',
       nameEng: get(nameEngCol),
       nameTha: get(nameThaCol),
       sizeEng: get(sizeEngCol) || '1pcs',
       sizeTha: get(sizeThaCol),
       taxRate: (get(vatCol) === TAX_VAT07 ? '7' : '0'),
+      manufacturingLocation: get(genProdCol) === POSTING_GROUP_CKPC ? 'ckpc' : 'instore',
       supplierCode: get(vendorCol),
       supplier: get(vendorCol),
       unitCost: getNum(costCol),
       orderQty,
+      orderUnit: (() => {
+        const uom = get(baseUomCol);
+        return ['PCS', 'CTN', 'KG'].includes(uom) ? uom : 'PCS';
+      })(),
       leadTime: getNum(leadCol) ?? 2,
       unitPrice: getNum(priceCol),
       salesQty: 1,

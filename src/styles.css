@@ -59,21 +59,43 @@ html, body { height: 100%; overflow: hidden; }
 .lang-btn:hover { background: #eee; }
 .lang-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
 
-.department-row {
+.department-row,
+.product-type-row {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   flex-shrink: 0;
 }
-.department-row .warn-msg { margin-left: 0.25rem; }
-.department-row label { font-weight: 600; min-width: 3em; }
-.department-row select {
+.department-row .warn-msg,
+.product-type-row .warn-msg { margin-left: 0.25rem; }
+.department-row label,
+.product-type-row label { font-weight: 600; min-width: 3em; }
+.department-row select,
+.product-type-row select {
   padding: 0.4rem 0.6rem;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   min-width: 180px;
 }
+.product-type-row select { min-width: 200px; }
 .warn-msg { color: var(--warn); font-size: 13px; }
+
+input.readonly, input[readonly] {
+  background: #eee;
+  color: #555;
+  cursor: default;
+}
+
+/* 商品区分: 計量器のとき取引・販売ブロック非表示、メーカー時は計量器情報非表示はHTMLのhiddenで制御 */
+/* リスト表: 計量器のとき仕入先・発注・原価・売価列を非表示、メーカー時は呼出番号列を非表示 */
+#app.product-type-scale .item-table .col-supplier,
+#app.product-type-scale .item-table .col-orderQty,
+#app.product-type-scale .item-table .col-cost,
+#app.product-type-scale .item-table .col-price { display: none; }
+#app.product-type-manufacturer .item-table .col-plu { display: none; }
+/* 原材料: 呼出番号・売価は非表示（販売情報を使わないため） */
+#app.product-type-raw-material .item-table .col-plu,
+#app.product-type-raw-material .item-table .col-price { display: none; }
 
 .main-layout {
   display: grid;

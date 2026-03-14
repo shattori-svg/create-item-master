@@ -14,6 +14,11 @@
         <select id="department" name="department"></select>
         <span id="department-warn" class="warn-msg" aria-live="polite"></span>
       </div>
+      <div class="product-type-row">
+        <label for="productType" data-i18n="label.productType">商品区分</label>
+        <select id="productType" name="productType"></select>
+        <span id="product-type-warn" class="warn-msg" aria-live="polite"></span>
+      </div>
       <div class="lang-switch">
         <button type="button" id="btn-lang-ja" class="lang-btn active" data-lang="ja">日本語</button>
         <button type="button" id="btn-lang-th" class="lang-btn" data-lang="th">ไทย</button>
@@ -72,12 +77,19 @@
                     <option value="7" selected>7%</option>
                   </select>
                 </div>
+                <div class="form-group form-group-narrow form-group--required" data-block="scale" hidden>
+                  <label for="manufacturingLocation" data-i18n="label.manufacturingLocation">製造場所</label>
+                  <select id="manufacturingLocation" name="manufacturingLocation">
+                    <option value="instore" selected data-i18n="option.manufacturingLocationInstore">店舗</option>
+                    <option value="ckpc" data-i18n="option.manufacturingLocationCkpc">CK/PC</option>
+                  </select>
+                </div>
               </div>
             </div>
           </div>
 
-          <!-- Step 2: 取引情報 -->
-          <div class="form-step form-step--2" data-step="2">
+          <!-- Step 2: 取引情報（計量器販売商品以外で表示） -->
+          <div class="form-step form-step--2" data-step="2" data-block="trade">
             <h3 class="form-step-title" data-i18n="step.trade">取引情報</h3>
             <div class="form-step-body">
               <div class="form-group form-group--required">
@@ -94,9 +106,18 @@
                   <label for="unitCost" data-i18n="label.unitCost">原価</label>
                   <input type="text" inputmode="decimal" id="unitCost" name="unitCost" data-min="0" />
                 </div>
-                <div class="form-group form-group--required">
+                <div class="form-group form-group--required" data-block="manufacturer">
                   <label for="orderQty" data-i18n="label.orderQty">発注入数</label>
                   <input type="number" id="orderQty" name="orderQty" min="1" />
+                </div>
+                <div class="form-group form-group--required" data-block="rawMaterial" hidden>
+                  <label for="orderUnit" data-i18n="label.orderUnit">発注単位</label>
+                  <select id="orderUnit" name="orderUnit">
+                    <option value="PCS" data-i18n="option.orderUnitPcs">PCS</option>
+                    <option value="CTN" data-i18n="option.orderUnitCtn">CTN</option>
+                    <option value="KG" data-i18n="option.orderUnitKg">KG</option>
+                  </select>
+                  <span id="err-orderUnit" class="error-msg"></span>
                 </div>
               </div>
               <div class="form-group form-group-narrow form-group--optional">
@@ -106,8 +127,8 @@
             </div>
           </div>
 
-          <!-- Step 3: 販売情報 -->
-          <div class="form-step form-step--3" data-step="3">
+          <!-- Step 3: 販売情報（メーカーバーコード販売時のみ表示） -->
+          <div class="form-step form-step--3" data-step="3" data-block="manufacturer-sales">
             <h3 class="form-step-title" data-i18n="step.sales">販売情報</h3>
             <div class="form-step-body">
               <div class="form-row">
@@ -157,6 +178,18 @@
             </div>
           </div>
 
+          <!-- 計量器情報（計量器販売商品時のみ表示） -->
+          <div class="form-step form-step--scale" data-step="scale" data-block="scale" hidden>
+            <h3 class="form-step-title" data-i18n="step.scaleInfo">計量器情報</h3>
+            <div class="form-step-body">
+              <div class="form-group form-group--required">
+                <label for="pluNo" data-i18n="label.pluNo">呼出番号</label>
+                <input type="text" id="pluNo" name="pluNo" inputmode="numeric" />
+                <span id="err-pluNo" class="error-msg"></span>
+              </div>
+            </div>
+          </div>
+
           <div class="form-actions">
             <button type="submit" id="btn-add" class="btn-add-primary" data-i18n="btn.add" disabled>入力完了</button>
             <button type="button" id="btn-clear" data-i18n="btn.clear">クリア</button>
@@ -176,16 +209,17 @@
         <div class="table-wrap">
           <table id="item-table" class="item-table">
             <thead>
-              <tr>
+              <tr id="item-thead-row">
                 <th><input type="checkbox" id="select-all" title="全選択" /></th>
                 <th data-i18n="table.barcode">バーコード</th>
                 <th data-i18n="table.nameEng">商品名(英)</th>
                 <th data-i18n="table.nameTha">商品名(泰)</th>
                 <th data-i18n="table.group">分類</th>
-                <th data-i18n="table.supplier">仕入先</th>
-                <th data-i18n="table.orderQty">発注入数</th>
-                <th data-i18n="table.cost">原価</th>
-                <th data-i18n="table.price">売価</th>
+                <th data-i18n="table.pluNo" class="col-plu">呼出番号</th>
+                <th data-i18n="table.supplier" class="col-supplier">仕入先</th>
+                <th id="table-order-col" data-i18n="table.orderQty" class="col-orderQty">発注入数</th>
+                <th data-i18n="table.cost" class="col-cost">原価</th>
+                <th data-i18n="table.price" class="col-price">売価</th>
               </tr>
             </thead>
             <tbody id="item-tbody"></tbody>
@@ -194,9 +228,9 @@
         <button type="button" id="btn-delete" data-i18n="btn.delete">削除</button>
 
         <div class="output-area">
-          <div class="output-checks">
+          <div class="output-checks" id="output-checks">
             <label><input type="checkbox" id="out-item" checked /> Item</label>
-            <label><input type="checkbox" id="out-additional" checked /> Additional Barcode</label>
+            <label id="out-second-wrap"><input type="checkbox" id="out-second" /> <span id="out-second-label">Additional Barcode</span></label>
           </div>
           <div class="output-filename">
             <label for="outputFilename" data-i18n="label.outputFilename">ファイル名</label>
