@@ -73,7 +73,7 @@
                   <label for="sizeTha"><span data-i18n="label.sizeTha">規格（タイ）</span></label>
                   <input type="text" id="sizeTha" name="sizeTha" />
                 </div>
-                <div class="form-group form-group-narrow form-group--required">
+                <div class="form-group form-group-narrow">
                   <label for="taxRate" data-i18n="label.taxRate">税率</label>
                   <select id="taxRate" name="taxRate">
                     <option value="0">0%</option>
@@ -108,10 +108,12 @@
                 <div class="form-group form-group--required">
                   <label for="unitCost" data-i18n="label.unitCost">原価</label>
                   <input type="text" inputmode="decimal" id="unitCost" name="unitCost" data-min="0" />
+                  <span id="err-unitCost" class="error-msg"></span>
                 </div>
                 <div class="form-group form-group--required" data-block="manufacturer">
                   <label for="orderQty" data-i18n="label.orderQty">発注入数</label>
                   <input type="number" id="orderQty" name="orderQty" min="1" />
+                  <span id="err-orderQty" class="error-msg"></span>
                 </div>
                 <div class="form-group form-group--required" data-block="rawMaterial" hidden>
                   <label for="orderUnit" data-i18n="label.orderUnit">発注単位</label>
@@ -138,10 +140,12 @@
                 <div class="form-group form-group--required">
                   <label for="unitPrice" data-i18n="label.unitPrice">売価</label>
                   <input type="text" inputmode="decimal" id="unitPrice" name="unitPrice" data-min="0" />
+                  <span id="err-unitPrice" class="error-msg"></span>
                 </div>
                 <div class="form-group form-group--required">
                   <label for="salesQty" data-i18n="label.salesQty">販売入数</label>
                   <input type="number" id="salesQty" name="salesQty" min="1" value="1" />
+                  <span id="err-salesQty" class="error-msg"></span>
                 </div>
               </div>
               <div id="case-fields" class="case-fields" hidden>
@@ -215,7 +219,7 @@
           <table id="item-table" class="item-table">
             <thead>
               <tr id="item-thead-row">
-                <th><input type="checkbox" id="select-all" title="全選択" /></th>
+                <th class="col-del-btn"></th>
                 <th data-i18n="table.barcode">バーコード</th>
                 <th data-i18n="table.nameEng">商品名(英)</th>
                 <th data-i18n="table.nameTha">商品名(泰)</th>
@@ -231,7 +235,7 @@
             <tbody id="item-tbody"></tbody>
           </table>
         </div>
-        <button type="button" id="btn-delete" data-i18n="btn.delete">削除</button>
+        <button type="button" id="btn-delete-all" class="btn-delete-all">全削除</button>
 
         <div class="output-area">
           <div class="output-checks" id="output-checks">

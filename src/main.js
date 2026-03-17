@@ -122,8 +122,7 @@ const el = {
   outSecond: document.getElementById('out-second'),
   outSecondLabel: document.getElementById('out-second-label'),
   outSecondWrap: document.getElementById('out-second-wrap'),
-  selectAll: document.getElementById('select-all'),
-  btnDelete: document.getElementById('btn-delete'),
+  btnDeleteAll: document.getElementById('btn-delete-all'),
   listMaxWarn: document.getElementById('list-max-warn'),
   outItem: document.getElementById('out-item'),
   outAdditional: document.getElementById('out-additional'),
@@ -181,6 +180,10 @@ const errorIds = {
   nameTha: 'err-nameTha',
   supplier: 'err-supplier',
   orderUnit: 'err-orderUnit',
+  unitCost: 'err-unitCost',
+  orderQty: 'err-orderQty',
+  unitPrice: 'err-unitPrice',
+  salesQty: 'err-salesQty',
   pluNo: 'err-pluNo',
   caseBarcode: 'err-caseBarcode',
   casePrice: 'err-casePrice',
@@ -784,6 +787,16 @@ function bindFocusSelectAll() {
   }
 }
 
+/** カンマ除去・前後ピリオド補完して数値文字列に正規化 */
+function cleanNumeric(val) {
+  if (val === '' || val == null) return val;
+  let s = String(val).replace(/,/g, ''); // カンマ除去
+  if (s === '.' || s === '') return s;
+  if (s.startsWith('.')) s = '0' + s;    // .5 → 0.5
+  if (s.endsWith('.')) s = s + '0';      // 5. → 5.0
+  return s;
+}
+
 function getFormData() {
   return {
     productGroup: el.productGroup.value.trim(),
@@ -798,25 +811,35 @@ function getFormData() {
     pluNo: el.pluNo ? el.pluNo.value.trim() : '',
     supplier: el.supplier.value.trim(),
     supplierCode: el.supplierCode.value.trim(),
-    unitCost: el.unitCost.value,
+    unitCost: cleanNumeric(el.unitCost.value),
     orderQty: el.orderQty.value,
     orderUnit: el.orderUnit?.value || 'PCS',
     leadTime: el.leadTime.value,
-    unitPrice: el.unitPrice.value,
+    unitPrice: cleanNumeric(el.unitPrice.value),
     salesQty: el.salesQty.value,
     caseBarcode: el.caseBarcode.value.trim(),
     caseName: el.caseName?.value.trim() ?? '',
     caseSizeEng: el.caseSizeEng?.value.trim() ?? '',
     caseSizeTha: el.caseSizeTha?.value.trim() ?? '',
-    casePrice: el.casePrice.value,
+    casePrice: cleanNumeric(el.casePrice.value),
     brandEng: el.brandEng.value.trim(),
     brandTha: el.brandTha.value.trim(),
   };
 }
 
+/** "Name (CODE)" または "Name（CODE）" 形式からコードを抽出する */
+function extractCodeFromDisplay(val) {
+  if (!val) return val;
+  const m = String(val).match(/[（(]([^）)]+)[）)]$/);
+  return m ? m[1].trim() : val;
+}
+
 function formDataToItem(f) {
   const isRawMaterial = selectedProductType === PRODUCT_TYPE_RAW_MATERIAL;
   const barcode = f.barcode != null ? String(f.barcode).trim() : '';
+  // supplierCode が "Name (CODE)" 形式の場合はコード部分だけ取り出す
+  const rawSupplierCode = f.supplierCode || f.supplier || '';
+  const supplierCode = extractCodeFromDisplay(rawSupplierCode);
   const item = {
     productGroupCode: f.productGroupCode || f.productGroup,
     productGroup: f.productGroup || f.productGroupCode,
@@ -829,7 +852,7 @@ function formDataToItem(f) {
     taxRate: f.taxRate,
     manufacturingLocation: f.manufacturingLocation === 'ckpc' ? 'ckpc' : 'instore',
     pluNo: f.pluNo != null ? String(f.pluNo).trim() : '',
-    supplierCode: f.supplierCode || f.supplier,
+    supplierCode,
     supplier: f.supplier || f.supplierCode,
     unitCost: f.unitCost !== '' ? Number(f.unitCost) : undefined,
     orderQty: !isRawMaterial && f.orderQty !== '' ? Number(f.orderQty) : 1,
@@ -1004,6 +1027,7 @@ function allRequiredFilled() {
 function bindRequiredFeedback() {
   el.form.addEventListener('input', updateRequiredFeedback);
   el.form.addEventListener('change', updateRequiredFeedback);
+  el.form.addEventListener('focusout', updateRequiredFeedback);
 }
 
 function bindSalesQtyToggle() {
@@ -1082,11 +1106,14 @@ function bindComboProductGroup() {
       let usedAI = false;
       if (hasGenAIConfig()) {
         btn.disabled = true;
+        el.btnAdd.disabled = true;
         btn.textContent = t('btn.suggesting') || '...';
         result = await suggestClassificationWithGenAI(nameEng, nameTha, groupForDept);
         if (result) usedAI = true;
         btn.textContent = t('btn.suggest');
         btn.disabled = false;
+        el.btnAdd.disabled = false;
+        updateRequiredFeedback();
       }
       if (!result) {
         const suggested = suggestGroupByProductName(nameEng, nameTha, selectedDepartment);
@@ -1324,29 +1351,18 @@ function bindTable() {
     if (!listSection.hasAttribute('tabindex')) listSection.setAttribute('tabindex', '-1');
   }
 
-  el.selectAll.addEventListener('change', () => {
-    const checked = el.selectAll.checked;
-    el.tbody.querySelectorAll('input[type="checkbox"]').forEach((cb) => (cb.checked = checked));
-  });
-  el.btnDelete.addEventListener('click', () => {
-    const indexes = [];
-    el.tbody.querySelectorAll('tr').forEach((tr, i) => {
-      if (tr.querySelector('input[type="checkbox"]')?.checked) indexes.push(i);
+  if (el.btnDeleteAll) {
+    el.btnDeleteAll.addEventListener('click', () => {
+      if (items.length === 0) return;
+      if (!confirm(`${items.length}件すべて削除しますか？`)) return;
+      saveToHistory();
+      items = [];
+      editingIndex = -1;
+      el.btnAdd.textContent = t('btn.add');
+      saveItemsToStorage();
+      renderTable();
     });
-    if (indexes.length === 0) return;
-    if (editingIndex >= 0) {
-      if (indexes.includes(editingIndex)) {
-        resetForm(true);
-      } else {
-        const removedBefore = indexes.filter((idx) => idx < editingIndex).length;
-        editingIndex -= removedBefore;
-      }
-    }
-    saveToHistory();
-    indexes.sort((a, b) => b - a).forEach((i) => items.splice(i, 1));
-    saveItemsToStorage();
-    renderTable();
-  });
+  }
 }
 
 function updateExportButtonState() {
@@ -1378,25 +1394,48 @@ function renderTable() {
     const tr = document.createElement('tr');
     tr.dataset.index = i;
     tr.classList.toggle('selected', i === editingIndex);
+    tr.style.cursor = 'pointer';
+    tr.addEventListener('click', (e) => {
+      if (e.target.closest('button')) return;
+      startEditRow(i);
+    });
 
-    // チェックボックス列
-    const tdCheck = document.createElement('td');
-    const cb = document.createElement('input');
-    cb.type = 'checkbox';
-    cb.className = 'row-check';
-    tdCheck.appendChild(cb);
-    tr.appendChild(tdCheck);
+    // 個別削除ボタン列
+    const tdDel = document.createElement('td');
+    tdDel.className = 'col-del-btn';
+    const btnRowDel = document.createElement('button');
+    btnRowDel.type = 'button';
+    btnRowDel.textContent = '削除';
+    btnRowDel.className = 'btn-row-delete';
+    btnRowDel.addEventListener('click', (e) => {
+      e.stopPropagation();
+      saveToHistory();
+      if (editingIndex === i) {
+        resetForm(true);
+      } else if (editingIndex > i) {
+        editingIndex--;
+      }
+      items.splice(i, 1);
+      saveItemsToStorage();
+      renderTable();
+    });
+    tdDel.appendChild(btnRowDel);
+    tr.appendChild(tdDel);
 
     // データ列
     // 分類コードがマスタに存在するかチェック
     const groupMasterForDept = getGroupMasterForDepartment(selectedDepartment);
-    const groupCodeValid = !item.productGroupCode || groupMasterForDept.some((r) => r.productGroupCode === item.productGroupCode);
+    const groupEntry = groupMasterForDept.find((r) => r.productGroupCode === item.productGroupCode);
+    const groupCodeValid = !item.productGroupCode || !!groupEntry;
+    const groupLabel = item.productGroupCode
+      ? (groupEntry ? `${item.productGroupCode} ${groupEntry.description || groupEntry.descriptionTha || ''}`.trimEnd() : item.productGroupCode)
+      : '';
 
     const cols = [
       { cls: 'cell-barcode', val: item.barcode || '' },
       { cls: 'cell-name', val: item.nameEng || '', truncate: 50 },
       { cls: 'cell-name', val: item.nameTha || '', truncate: 50 },
-      { cls: groupCodeValid ? '' : 'cell-invalid', val: item.productGroupCode || '', title: groupCodeValid ? '' : '分類コードがマスタに存在しません' },
+      { cls: groupCodeValid ? '' : 'cell-invalid', val: groupLabel, title: groupCodeValid ? '' : '分類コードがマスタに存在しません', truncate: 40 },
       { cls: 'col-plu', val: item.pluNo != null ? String(item.pluNo) : '' },
       { cls: 'col-supplier cell-name', val: (item.supplier || item.supplierCode || ''), truncate: 30 },
       { cls: 'col-orderQty', val: String(isRawMaterial ? (item.orderUnit || '') : (item.orderQty != null ? item.orderQty : '')) },
@@ -1550,12 +1589,13 @@ function startEditRow(i) {
 }
 
 function copyRow(i) {
-  if (items.length >= MAX_ITEMS) return;
-  saveToHistory();
   const copy = { ...items[i], barcode: '' }; // バーコードはクリア（一意性確保）
-  items.splice(i + 1, 0, copy);
-  saveItemsToStorage();
+  editingIndex = -1;
+  el.btnAdd.textContent = t('btn.add');
+  fillForm(copy);
+  clearFieldErrors();
   renderTable();
+  el.barcode.focus();
 }
 
 function applyImportReplace(parsed) {
