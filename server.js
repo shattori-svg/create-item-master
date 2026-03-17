@@ -478,6 +478,51 @@ app.get('/api/masters/suppliers/export', requireAdmin, async (req, res) => {
   }
 });
 
+// --- Store Master ---
+
+app.get('/api/masters/stores', requireAuth, async (req, res) => {
+  if (!supabase) return res.status(503).json({ error: 'Database not configured' });
+  try {
+    const { data, error } = await supabase
+      .from('store_master')
+      .select('store_code, store_name, store_name_eng')
+      .eq('active', true)
+      .order('store_code');
+    if (error) throw error;
+    return res.json(data || []);
+  } catch (err) {
+    console.error('GET /api/masters/stores:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/masters/stores/import', requireAdmin, upload.single('file'), async (req, res) => {
+  if (!supabase) return res.status(503).json({ error: 'Database not configured' });
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  try {
+    const wb = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+    const records = rows
+      .map((r) => ({
+        store_code: String(r['Store Code'] || r['store_code'] || '').trim(),
+        store_name: String(r['Store Name'] || r['store_name'] || '').trim(),
+        store_name_eng: String(r['Store Name (English)'] || r['store_name_eng'] || '').trim(),
+        active: r['active'] !== false && r['active'] !== 0 && r['active'] !== 'false',
+      }))
+      .filter((r) => r.store_code);
+    const unique = [...new Map(records.map((r) => [r.store_code, r])).values()];
+    const { error } = await supabase
+      .from('store_master')
+      .upsert(unique, { onConflict: 'store_code' });
+    if (error) throw error;
+    return res.json({ count: unique.length });
+  } catch (err) {
+    console.error('POST /api/masters/stores/import:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // --- AI Suggest Proxy ---
 app.post('/api/ai-suggest', requireAuth, async (req, res) => {
   const GEMINI_API_KEY = process.env.VITE_GEMINI_API_KEY || '';

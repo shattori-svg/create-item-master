@@ -547,8 +547,41 @@ async function importMasterFile(type) {
   }
 }
 
+async function loadStoreMaster() {
+  try {
+    const res = await fetch('/api/masters/stores', { credentials: 'include' });
+    if (!res.ok) return [];
+    return await res.json();
+  } catch {
+    return [];
+  }
+}
+
 function setupInitialProfile(status) {
-  return new Promise((resolve) => {
+  return new Promise(async (resolve) => {
+    // 店舗ドロップダウンを構築
+    el.profileStore.innerHTML = '<option value="">-- 選択してください --</option>';
+    const stores = await loadStoreMaster();
+    if (stores.length === 0) {
+      // マスタが未登録の場合はテキスト入力にフォールバック
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.id = 'profile-store';
+      input.className = 'profile-input';
+      input.placeholder = '例: TH001';
+      input.value = status.preferredStore || '';
+      el.profileStore.replaceWith(input);
+      el.profileStore = input;
+    } else {
+      stores.forEach((s) => {
+        const opt = document.createElement('option');
+        opt.value = s.store_code;
+        opt.textContent = `${s.store_code}${s.store_name ? ' ' + s.store_name : ''}`;
+        if (s.store_code === (status.preferredStore || '')) opt.selected = true;
+        el.profileStore.appendChild(opt);
+      });
+    }
+
     // 部門ドロップダウンを構築（許可部門のみ）
     el.profileDept.innerHTML = '<option value="">-- 選択してください --</option>';
     getAllowedDepartments().forEach((d) => {
@@ -559,17 +592,15 @@ function setupInitialProfile(status) {
       el.profileDept.appendChild(opt);
     });
 
-    // 既存値をセット
-    el.profileStore.value = status.preferredStore || '';
     el.profileError.hidden = true;
     el.profileSetupModal.hidden = false;
     el.profileStore.focus();
 
     async function save() {
-      const preferredStore = el.profileStore.value.trim();
+      const preferredStore = el.profileStore.value.trim ? el.profileStore.value.trim() : el.profileStore.value;
       const preferredDepartment = el.profileDept.value;
       if (!preferredStore) {
-        el.profileError.textContent = '店舗コードを入力してください。';
+        el.profileError.textContent = '店舗を選択してください。';
         el.profileError.hidden = false;
         return;
       }
