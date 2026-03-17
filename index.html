@@ -20,6 +20,9 @@
         <span id="product-type-warn" class="warn-msg" aria-live="polite"></span>
       </div>
       <div class="lang-switch">
+        <span id="auth-user" class="auth-user" hidden></span>
+        <button type="button" id="btn-admin" class="lang-btn btn-admin" hidden>管理者設定</button>
+        <button type="button" id="btn-logout" class="lang-btn" data-i18n="btn.logout" hidden>ログアウト</button>
         <button type="button" id="btn-lang-ja" class="lang-btn active" data-lang="ja">日本語</button>
         <button type="button" id="btn-lang-th" class="lang-btn" data-lang="th">ไทย</button>
       </div>
@@ -201,6 +204,8 @@
         <div class="list-section-header">
           <h2 class="list-title" data-i18n="title.itemList">入力済み商品リスト</h2>
           <div class="list-header-actions">
+            <button type="button" id="btn-undo" class="btn-history" title="元に戻す (Ctrl+Z)" disabled>↩ 元に戻す</button>
+            <button type="button" id="btn-redo" class="btn-history" title="やり直し (Ctrl+Y)" disabled>↪ やり直し</button>
             <button type="button" id="btn-import" data-i18n="btn.import">ファイルインポート</button>
             <input type="file" id="file-import" accept=".xlsx" hidden />
           </div>
@@ -220,6 +225,7 @@
                 <th id="table-order-col" data-i18n="table.orderQty" class="col-orderQty">発注入数</th>
                 <th data-i18n="table.cost" class="col-cost">原価</th>
                 <th data-i18n="table.price" class="col-price">売価</th>
+                <th class="col-action">操作</th>
               </tr>
             </thead>
             <tbody id="item-tbody"></tbody>
@@ -242,6 +248,122 @@
           <div id="export-errors" class="error-block" role="alert" hidden></div>
         </div>
       </section>
+    </div>
+  </div>
+
+  <!-- インポートモード選択モーダル -->
+  <div id="import-mode-modal" class="modal-overlay" hidden aria-modal="true" role="dialog">
+    <div class="modal-content">
+      <h3 class="modal-title">インポートモード</h3>
+      <p id="import-mode-desc" class="modal-text"></p>
+      <div class="import-mode-options">
+        <button type="button" id="btn-import-replace" class="btn-modal btn-modal-primary">置換（全体を新しいデータで置き換え）</button>
+        <button type="button" id="btn-import-merge" class="btn-modal">バーコード照合で更新（原材料の再取り込み等）</button>
+      </div>
+      <div class="modal-actions">
+        <button type="button" id="btn-cancel-import-mode" class="btn-modal">キャンセル</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- セッション切れモーダル -->
+  <div id="session-expired-modal" class="modal-overlay" hidden aria-modal="true" role="dialog">
+    <div class="modal-content">
+      <h3 class="modal-title">セッションが切れました</h3>
+      <p class="modal-text">ログインセッションが無効になりました。入力済みのデータはブラウザに保存されています。再度ログインしてから作業を続けてください。</p>
+      <div class="modal-actions">
+        <button type="button" id="btn-session-reload" class="btn-modal btn-modal-primary">ログインページへ</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 初回プロフィール設定モーダル -->
+  <div id="profile-setup-modal" class="modal-overlay" hidden aria-modal="true" role="dialog" aria-labelledby="profile-modal-title">
+    <div class="modal-content">
+      <h3 id="profile-modal-title" class="modal-title">初回設定</h3>
+      <p class="modal-text">ご利用の店舗と担当部門を選択してください。</p>
+      <div class="form-group" style="margin-bottom:1rem">
+        <label for="profile-store" style="display:block;margin-bottom:0.3rem;font-weight:600">店舗コード</label>
+        <input type="text" id="profile-store" class="profile-input" placeholder="例: TH001" />
+      </div>
+      <div class="form-group" style="margin-bottom:1.25rem">
+        <label for="profile-dept" style="display:block;margin-bottom:0.3rem;font-weight:600">担当部門</label>
+        <select id="profile-dept" class="profile-input"></select>
+      </div>
+      <p id="profile-error" class="error-block" hidden></p>
+      <div class="modal-actions">
+        <button type="button" id="btn-profile-save" class="btn-modal btn-modal-primary">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 管理者パネル モーダル -->
+  <div id="admin-modal" class="modal-overlay" hidden aria-modal="true" role="dialog" aria-labelledby="admin-modal-title">
+    <div class="modal-content modal-content--wide">
+      <h3 id="admin-modal-title" class="modal-title">管理者設定</h3>
+      <p id="admin-error" class="error-block" hidden></p>
+
+      <!-- タブ -->
+      <div class="admin-tabs">
+        <button type="button" class="admin-tab admin-tab--active" data-tab="users">ユーザー管理</button>
+        <button type="button" class="admin-tab" data-tab="masters">マスタ管理</button>
+        <button type="button" class="admin-tab" data-tab="logs">操作ログ</button>
+      </div>
+
+      <!-- ユーザー管理タブ -->
+      <div id="admin-tab-users" class="admin-tab-panel">
+        <div class="admin-table-wrap">
+          <table class="admin-table">
+            <thead>
+              <tr>
+                <th>メールアドレス</th>
+                <th>表示名</th>
+                <th>ロール</th>
+                <th>許可部門</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="admin-user-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- マスタインポートタブ -->
+      <div id="admin-tab-masters" class="admin-tab-panel" hidden>
+        <div class="master-import-section">
+          <div class="master-import-card">
+            <h4 class="master-import-title">分類マスタ（group_master）</h4>
+            <p class="master-import-desc">列: <code>Product Group Code</code>, <code>Description</code>, <code>Description (THA)</code>, <code>Description (JPN)</code></p>
+            <div class="master-import-row">
+              <input type="file" id="input-group-file" accept=".xlsx,.xls,.csv" class="master-import-file">
+              <button type="button" id="btn-group-import" class="btn-admin-save">インポート</button>
+              <a id="btn-group-export" href="/api/masters/groups/export" class="btn-admin-save" style="text-decoration:none">ダウンロード</a>
+            </div>
+            <p id="group-import-status" class="master-import-status" hidden></p>
+          </div>
+          <div class="master-import-card">
+            <h4 class="master-import-title">仕入先マスタ（supplier_master）</h4>
+            <p class="master-import-desc">列: <code>Supplier No.</code>, <code>Abbreviation</code>, <code>Supplier Official Name (English)</code>, <code>Supplier Official Name (Thai)</code></p>
+            <div class="master-import-row">
+              <input type="file" id="input-supplier-file" accept=".xlsx,.xls,.csv" class="master-import-file">
+              <button type="button" id="btn-supplier-import" class="btn-admin-save">インポート</button>
+              <a id="btn-supplier-export" href="/api/masters/suppliers/export" class="btn-admin-save" style="text-decoration:none">ダウンロード</a>
+            </div>
+            <p id="supplier-import-status" class="master-import-status" hidden></p>
+          </div>
+        </div>
+      </div>
+
+      <!-- 操作ログタブ -->
+      <div id="admin-tab-logs" class="admin-tab-panel" hidden>
+        <div id="admin-logs-content" class="admin-logs-content">
+          <p style="text-align:center;color:#888">タブを開くと読み込みます</p>
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" id="btn-close-admin-modal" class="btn-modal">閉じる</button>
+      </div>
     </div>
   </div>
 

@@ -93,6 +93,7 @@
     "export": "ファイル出力",
     "import": "ファイルインポート",
     "edit": "編集",
+    "logout": "ログアウト",
     "goToImport": "インポート画面へ",
     "close": "閉じる"
   }

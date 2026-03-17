@@ -6,17 +6,79 @@ import { initI18n, setLanguage, t, getLang } from './lib/i18n.js';
 import { DEPARTMENTS } from './data/departments.js';
 import { PRODUCT_TYPES, PRODUCT_TYPE_MANUFACTURER, PRODUCT_TYPE_SCALE, PRODUCT_TYPE_RAW_MATERIAL } from './data/productType.js';
 import { MAX_ITEMS, DEFAULT_SPEC_ENG, DEFAULT_SALES_QTY, DEFAULT_TAX_RATE, DEFAULT_LEAD_TIME, IMPORT_PAGE_URL } from './data/constants.js';
-import { setGroupMaster, setSupplierMaster, getGroupMasterForDepartment, filterGroup, filterSupplier, suggestGroupByProductName } from './data/masters.js';
+import { setGroupMaster, setSupplierMaster, getGroupMasterForDepartment, getSupplierMasterForDepartment, filterGroup, filterSupplier, suggestGroupByProductName } from './data/masters.js';
 import { suggestClassificationWithGenAI, hasGenAIConfig } from './lib/genaiSuggest.js';
-import { fetchMastersFromSheet } from './lib/sheetsApi.js';
+import { fetchMastersFromApi, clearMastersCache } from './lib/mastersApi.js';
 import { validateFormFields, validateForExport } from './lib/validation.js';
 import { exportXlsx, parseItemSheet } from './lib/excel.js';
 
 // --- State ---
-let items = [];
+const STORAGE_KEY_ITEMS = 'item_import_items_v1';
+
+function saveItemsToStorage() {
+  try {
+    localStorage.setItem(STORAGE_KEY_ITEMS, JSON.stringify(items));
+  } catch {
+    // ignore
+  }
+}
+
+function loadItemsFromStorage() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_ITEMS);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+let items = loadItemsFromStorage();
 let selectedDepartment = '01';
 let selectedProductType = PRODUCT_TYPE_MANUFACTURER;
 let editingIndex = -1;
+let currentAuthStatus = null;
+
+// --- Undo/Redo ---
+const MAX_HISTORY = 30;
+let undoStack = [];
+let redoStack = [];
+
+function saveToHistory() {
+  undoStack.push(JSON.stringify(items));
+  if (undoStack.length > MAX_HISTORY) undoStack.shift();
+  redoStack = [];
+  updateHistoryButtons();
+}
+
+function updateHistoryButtons() {
+  if (el.btnUndo) el.btnUndo.disabled = undoStack.length === 0;
+  if (el.btnRedo) el.btnRedo.disabled = redoStack.length === 0;
+}
+
+function undo() {
+  if (undoStack.length === 0) return;
+  redoStack.push(JSON.stringify(items));
+  items = JSON.parse(undoStack.pop());
+  saveItemsToStorage();
+  editingIndex = -1;
+  renderTable();
+  updateExportButtonState();
+  updateHistoryButtons();
+}
+
+function redo() {
+  if (redoStack.length === 0) return;
+  undoStack.push(JSON.stringify(items));
+  items = JSON.parse(redoStack.pop());
+  saveItemsToStorage();
+  editingIndex = -1;
+  renderTable();
+  updateExportButtonState();
+  updateHistoryButtons();
+}
+
+// インポートモード用一時保存
+let pendingImportItems = null;
 
 // --- DOM ---
 const el = {
@@ -24,6 +86,8 @@ const el = {
   departmentWarn: document.getElementById('department-warn'),
   productType: document.getElementById('productType'),
   productTypeWarn: document.getElementById('product-type-warn'),
+  authUser: document.getElementById('auth-user'),
+  btnLogout: document.getElementById('btn-logout'),
   form: document.getElementById('item-form'),
   productGroup: document.getElementById('productGroup'),
   productGroupCode: document.getElementById('productGroupCode'),
@@ -74,6 +138,36 @@ const el = {
   btnClear: document.getElementById('btn-clear'),
   btnAdd: document.getElementById('btn-add'),
   masterStatus: document.getElementById('master-status'),
+  profileSetupModal: document.getElementById('profile-setup-modal'),
+  profileStore: document.getElementById('profile-store'),
+  profileDept: document.getElementById('profile-dept'),
+  profileError: document.getElementById('profile-error'),
+  btnProfileSave: document.getElementById('btn-profile-save'),
+  btnAdmin: document.getElementById('btn-admin'),
+  adminModal: document.getElementById('admin-modal'),
+  adminUserTbody: document.getElementById('admin-user-tbody'),
+  adminError: document.getElementById('admin-error'),
+  btnCloseAdminModal: document.getElementById('btn-close-admin-modal'),
+  adminTabs: document.querySelectorAll('.admin-tab'),
+  adminTabUsers: document.getElementById('admin-tab-users'),
+  adminTabMasters: document.getElementById('admin-tab-masters'),
+  adminTabLogs: document.getElementById('admin-tab-logs'),
+  adminLogsContent: document.getElementById('admin-logs-content'),
+  btnUndo: document.getElementById('btn-undo'),
+  btnRedo: document.getElementById('btn-redo'),
+  importModeModal: document.getElementById('import-mode-modal'),
+  importModeDesc: document.getElementById('import-mode-desc'),
+  btnImportReplace: document.getElementById('btn-import-replace'),
+  btnImportMerge: document.getElementById('btn-import-merge'),
+  btnCancelImportMode: document.getElementById('btn-cancel-import-mode'),
+  sessionExpiredModal: document.getElementById('session-expired-modal'),
+  btnSessionReload: document.getElementById('btn-session-reload'),
+  inputGroupFile: document.getElementById('input-group-file'),
+  btnGroupImport: document.getElementById('btn-group-import'),
+  groupImportStatus: document.getElementById('group-import-status'),
+  inputSupplierFile: document.getElementById('input-supplier-file'),
+  btnSupplierImport: document.getElementById('btn-supplier-import'),
+  supplierImportStatus: document.getElementById('supplier-import-status'),
   btnSuggestClassification: document.getElementById('btn-suggest-classification'),
   suggestSourceMsg: document.getElementById('suggest-source-msg'),
   numpad: document.getElementById('numpad'),
@@ -96,7 +190,8 @@ const errorIds = {
 async function init() {
   await initI18n();
   setLanguage('ja');
-  await loadMastersFromSheet();
+  const authOk = await ensureAuthenticated();
+  if (!authOk) return;
   function refreshDepartmentOptions() {
   const lang = getLang();
   Array.from(el.department.options).forEach((opt) => {
@@ -118,6 +213,7 @@ async function init() {
   document.getElementById('btn-lang-th').addEventListener('click', () => { setLanguage('th'); refreshDepartmentOptions(); refreshProductTypeOptions(); applyProductTypeVisibility(); document.querySelectorAll('.lang-btn').forEach((b) => b.classList.remove('active')); document.getElementById('btn-lang-th').classList.add('active'); });
 
   fillDepartmentSelect();
+  await loadMastersFromApi();
   fillProductTypeSelect();
   applyProductTypeVisibility();
   setDefaultFormValues();
@@ -135,20 +231,394 @@ async function init() {
   bindTable();
   bindOutput();
   bindNumpad();
+  bindAuth();
   renderTable();
   updateRequiredFeedback();
   updateExportButtonState();
+  updateHistoryButtons();
+  startSessionPolling();
+}
+
+async function ensureAuthenticated() {
+  try {
+    const res = await fetch('/api/auth/status', { credentials: 'include' });
+    if (!res.ok) return true;
+    const status = await res.json();
+    applyAuthStatus(status);
+    if (status.externalAuth && !status.loggedIn) {
+      window.location.href = '/login';
+      return false;
+    }
+    if (status.loggedIn && status.needsProfileSetup) {
+      await setupInitialProfile(status);
+    }
+  } catch {
+    // Dev mode without auth server.
+  }
+  return true;
+}
+
+function applyAuthStatus(status) {
+  if (!status) return;
+  currentAuthStatus = status;
+  // preferredDepartment を初期選択部門に反映（許可部門外なら最初の許可部門を使用）
+  if (status.preferredDepartment) {
+    const allowed = status.role === 'admin' ? null : (status.allowedDepartments || []);
+    if (!allowed || allowed.length === 0 || allowed.includes(status.preferredDepartment)) {
+      selectedDepartment = status.preferredDepartment;
+    } else {
+      selectedDepartment = allowed[0];
+    }
+  }
+  if (el.authUser) {
+    el.authUser.hidden = !status.loggedIn;
+    el.authUser.textContent = status.loggedIn ? (status.displayName || status.username || '') : '';
+  }
+  if (el.btnLogout) {
+    el.btnLogout.hidden = !status.loggedIn;
+  }
+  if (el.btnAdmin) {
+    el.btnAdmin.hidden = !(status.loggedIn && status.role === 'admin');
+  }
+}
+
+function bindAuth() {
+  if (el.btnLogout) {
+    el.btnLogout.addEventListener('click', async () => {
+      await fetch('/logout', { method: 'POST', credentials: 'include' });
+      window.location.href = '/login';
+    });
+  }
+  if (el.btnAdmin) {
+    el.btnAdmin.addEventListener('click', () => openAdminModal());
+  }
+  if (el.btnCloseAdminModal) {
+    el.btnCloseAdminModal.addEventListener('click', () => closeAdminModal());
+  }
+  if (el.adminModal) {
+    el.adminModal.addEventListener('click', (e) => {
+      if (e.target === el.adminModal) closeAdminModal();
+    });
+  }
+  // 管理者タブ切り替え
+  el.adminTabs.forEach((tab) => {
+    tab.addEventListener('click', () => {
+      el.adminTabs.forEach((t) => t.classList.remove('admin-tab--active'));
+      tab.classList.add('admin-tab--active');
+      const target = tab.dataset.tab;
+      if (el.adminTabUsers) el.adminTabUsers.hidden = target !== 'users';
+      if (el.adminTabMasters) el.adminTabMasters.hidden = target !== 'masters';
+      if (el.adminTabLogs) el.adminTabLogs.hidden = target !== 'logs';
+      if (target === 'logs') fetchAdminLogs();
+    });
+  });
+  // マスタインポートボタン
+  if (el.btnGroupImport) {
+    el.btnGroupImport.addEventListener('click', () => importMasterFile('groups'));
+  }
+  if (el.btnSupplierImport) {
+    el.btnSupplierImport.addEventListener('click', () => importMasterFile('suppliers'));
+  }
+  // Undo/Redo ボタン + キーボードショートカット
+  if (el.btnUndo) el.btnUndo.addEventListener('click', undo);
+  if (el.btnRedo) el.btnRedo.addEventListener('click', redo);
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'z') { e.preventDefault(); undo(); }
+    if ((e.ctrlKey || e.metaKey) && ((e.shiftKey && e.key === 'z') || e.key === 'y')) { e.preventDefault(); redo(); }
+  });
+  // インポートモードモーダル
+  if (el.btnImportReplace) {
+    el.btnImportReplace.addEventListener('click', () => {
+      if (pendingImportItems) applyImportReplace(pendingImportItems);
+      pendingImportItems = null;
+      if (el.importModeModal) el.importModeModal.hidden = true;
+    });
+  }
+  if (el.btnImportMerge) {
+    el.btnImportMerge.addEventListener('click', () => {
+      if (pendingImportItems) applyImportMerge(pendingImportItems);
+      pendingImportItems = null;
+      if (el.importModeModal) el.importModeModal.hidden = true;
+    });
+  }
+  if (el.btnCancelImportMode) {
+    el.btnCancelImportMode.addEventListener('click', () => {
+      pendingImportItems = null;
+      if (el.importModeModal) el.importModeModal.hidden = true;
+    });
+  }
+  // セッション切れモーダル
+  if (el.btnSessionReload) {
+    el.btnSessionReload.addEventListener('click', () => {
+      window.location.href = '/login';
+    });
+  }
+}
+
+function closeAdminModal() {
+  if (el.adminModal) el.adminModal.hidden = true;
+}
+
+async function openAdminModal() {
+  if (!el.adminModal) return;
+  el.adminModal.hidden = false;
+  el.adminError.hidden = true;
+  el.adminUserTbody.innerHTML = '<tr><td colspan="5" style="text-align:center">読み込み中…</td></tr>';
+  try {
+    const res = await fetch('/api/admin/users', { credentials: 'include' });
+    if (!res.ok) throw new Error(`${res.status}`);
+    const users = await res.json();
+    renderAdminUserTable(users);
+  } catch (err) {
+    el.adminError.textContent = 'ユーザー一覧の取得に失敗しました: ' + err.message;
+    el.adminError.hidden = false;
+    el.adminUserTbody.innerHTML = '';
+  }
+}
+
+function renderAdminUserTable(users) {
+  const DEPT_CODES = ['01', '02', '03', '04', '05', '06'];
+  const DEPT_NAMES = { '01': '食品', '02': '青果', '03': '鮮魚', '04': '精肉', '05': '総菜', '06': '店舗管理' };
+
+  el.adminUserTbody.innerHTML = '';
+  users.forEach((user) => {
+    const tr = document.createElement('tr');
+    tr.dataset.userId = user.id;
+
+    // メール
+    const tdEmail = document.createElement('td');
+    tdEmail.textContent = user.username;
+    tr.appendChild(tdEmail);
+
+    // 表示名
+    const tdName = document.createElement('td');
+    tdName.textContent = user.display_name || '—';
+    tr.appendChild(tdName);
+
+    // ロール
+    const tdRole = document.createElement('td');
+    const roleSelect = document.createElement('select');
+    roleSelect.className = 'admin-select';
+    roleSelect.dataset.field = 'role';
+    ['admin', 'user'].forEach((r) => {
+      const opt = document.createElement('option');
+      opt.value = r;
+      opt.textContent = r === 'admin' ? '管理者' : '一般';
+      opt.selected = user.role === r;
+      roleSelect.appendChild(opt);
+    });
+    tdRole.appendChild(roleSelect);
+    tr.appendChild(tdRole);
+
+    // 許可部門（チェックボックス）
+    const tdDepts = document.createElement('td');
+    tdDepts.className = 'admin-dept-cell';
+    const deptWrap = document.createElement('div');
+    deptWrap.className = 'admin-dept-wrap';
+    DEPT_CODES.forEach((code) => {
+      const label = document.createElement('label');
+      label.className = 'admin-dept-label';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.value = code;
+      cb.dataset.field = 'dept';
+      cb.checked = Array.isArray(user.allowed_departments) && user.allowed_departments.includes(code);
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(DEPT_NAMES[code] || code));
+      deptWrap.appendChild(label);
+    });
+    tdDepts.appendChild(deptWrap);
+    tr.appendChild(tdDepts);
+
+    // 操作ボタン
+    const tdActions = document.createElement('td');
+    const btnSave = document.createElement('button');
+    btnSave.type = 'button';
+    btnSave.textContent = '保存';
+    btnSave.className = 'btn-admin-save';
+    btnSave.addEventListener('click', () => saveUserAdmin(tr, user.id));
+    tdActions.appendChild(btnSave);
+    tr.appendChild(tdActions);
+
+    el.adminUserTbody.appendChild(tr);
+  });
+}
+
+async function saveUserAdmin(tr, userId) {
+  const roleSelect = tr.querySelector('select[data-field="role"]');
+  const deptCheckboxes = tr.querySelectorAll('input[type="checkbox"][data-field="dept"]');
+  const role = roleSelect ? roleSelect.value : undefined;
+  const allowed_departments = Array.from(deptCheckboxes)
+    .filter((cb) => cb.checked)
+    .map((cb) => cb.value);
+  try {
+    const res = await fetch(`/api/admin/users/${userId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ role, allowed_departments }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || res.status);
+    }
+    const saveBtn = tr.querySelector('.btn-admin-save');
+    if (saveBtn) {
+      saveBtn.textContent = '✓ 保存済み';
+      setTimeout(() => { saveBtn.textContent = '保存'; }, 1500);
+    }
+  } catch (err) {
+    alert('保存に失敗しました: ' + err.message);
+  }
+}
+
+async function fetchAdminLogs() {
+  if (!el.adminLogsContent) return;
+  el.adminLogsContent.innerHTML = '<p>読み込み中…</p>';
+  try {
+    const res = await fetch('/api/admin/logs', { credentials: 'include' });
+    if (!res.ok) throw new Error(`${res.status}`);
+    const logs = await res.json();
+    if (logs.length === 0) {
+      el.adminLogsContent.innerHTML = '<p>ログはありません。</p>';
+      return;
+    }
+    const rows = logs.map((log) => {
+      const date = new Date(log.created_at).toLocaleString('ja-JP');
+      const user = escapeHtml(log.user_display_name || log.username || '—');
+      const dept = escapeHtml(log.dept || '—');
+      const count = log.item_count ?? '—';
+      const filename = escapeHtml(log.filename || '—');
+      return `<tr><td>${date}</td><td>${user}</td><td>${dept}</td><td>${count}</td><td>${filename}</td></tr>`;
+    }).join('');
+    el.adminLogsContent.innerHTML = `<table class="admin-logs-table"><thead><tr><th>日時</th><th>ユーザー</th><th>部門</th><th>件数</th><th>ファイル名</th></tr></thead><tbody>${rows}</tbody></table>`;
+  } catch (err) {
+    el.adminLogsContent.innerHTML = `<p class="admin-logs-error">取得失敗: ${escapeHtml(err.message)}</p>`;
+  }
+}
+
+async function importMasterFile(type) {
+  const isGroup = type === 'groups';
+  const fileInput = isGroup ? el.inputGroupFile : el.inputSupplierFile;
+  const statusEl = isGroup ? el.groupImportStatus : el.supplierImportStatus;
+  const btn = isGroup ? el.btnGroupImport : el.btnSupplierImport;
+
+  if (!fileInput || !fileInput.files.length) {
+    alert('ファイルを選択してください。');
+    return;
+  }
+  const file = fileInput.files[0];
+  const formData = new FormData();
+  formData.append('file', file);
+
+  btn.disabled = true;
+  btn.textContent = '処理中…';
+  if (statusEl) { statusEl.hidden = true; statusEl.className = 'master-import-status'; }
+
+  try {
+    const res = await fetch(`/api/masters/${type}/import`, {
+      method: 'POST',
+      credentials: 'include',
+      body: formData,
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || res.status);
+    if (statusEl) {
+      statusEl.textContent = `✓ ${body.count} 件インポートしました`;
+      statusEl.className = 'master-import-status master-import-status--ok';
+      statusEl.hidden = false;
+    }
+    fileInput.value = '';
+    // マスタキャッシュをクリアして再取得
+    clearMastersCache();
+    await loadMastersFromApi();
+  } catch (err) {
+    if (statusEl) {
+      statusEl.textContent = 'エラー: ' + err.message;
+      statusEl.className = 'master-import-status master-import-status--err';
+      statusEl.hidden = false;
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'インポート';
+  }
+}
+
+function setupInitialProfile(status) {
+  return new Promise((resolve) => {
+    // 部門ドロップダウンを構築（許可部門のみ）
+    el.profileDept.innerHTML = '<option value="">-- 選択してください --</option>';
+    getAllowedDepartments().forEach((d) => {
+      const opt = document.createElement('option');
+      opt.value = d.code;
+      opt.textContent = `${d.code} ${d.nameJa}`;
+      if (d.code === (status.preferredDepartment || '')) opt.selected = true;
+      el.profileDept.appendChild(opt);
+    });
+
+    // 既存値をセット
+    el.profileStore.value = status.preferredStore || '';
+    el.profileError.hidden = true;
+    el.profileSetupModal.hidden = false;
+    el.profileStore.focus();
+
+    async function save() {
+      const preferredStore = el.profileStore.value.trim();
+      const preferredDepartment = el.profileDept.value;
+      if (!preferredStore) {
+        el.profileError.textContent = '店舗コードを入力してください。';
+        el.profileError.hidden = false;
+        return;
+      }
+      if (!preferredDepartment) {
+        el.profileError.textContent = '担当部門を選択してください。';
+        el.profileError.hidden = false;
+        return;
+      }
+      el.btnProfileSave.disabled = true;
+      try {
+        await fetch('/api/me/preferences', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ preferredStore, preferredDepartment }),
+        });
+        el.profileSetupModal.hidden = true;
+        resolve();
+      } catch {
+        el.profileError.textContent = '保存に失敗しました。再度お試しください。';
+        el.profileError.hidden = false;
+      } finally {
+        el.btnProfileSave.disabled = false;
+      }
+    }
+
+    el.btnProfileSave.onclick = save;
+    el.profileStore.onkeydown = (e) => { if (e.key === 'Enter') el.profileDept.focus(); };
+  });
+}
+
+function getAllowedDepartments() {
+  if (!currentAuthStatus || currentAuthStatus.role === 'admin') return DEPARTMENTS;
+  const allowed = Array.isArray(currentAuthStatus.allowedDepartments) ? currentAuthStatus.allowedDepartments : [];
+  if (allowed.length === 0) return DEPARTMENTS;
+  return DEPARTMENTS.filter((d) => allowed.includes(d.code));
 }
 
 function fillDepartmentSelect() {
   const lang = getLang();
-  DEPARTMENTS.forEach((d) => {
+  const depts = getAllowedDepartments();
+  depts.forEach((d) => {
     const opt = document.createElement('option');
     opt.value = d.code;
     const name = lang === 'ja' ? (d.nameJa ?? d.nameTh) : (d.nameTh ?? d.nameJa);
     opt.textContent = `${d.code} ${name}`;
     el.department.appendChild(opt);
   });
+  // 許可部門に selectedDepartment が含まれない場合は最初の許可部門に変更
+  if (depts.length > 0 && !depts.some((d) => d.code === selectedDepartment)) {
+    selectedDepartment = depts[0].code;
+  }
   el.department.value = selectedDepartment;
 }
 
@@ -281,6 +751,7 @@ function bindForm() {
       return;
     }
     const item = formDataToItem(fields);
+    saveToHistory();
     if (editingIndex >= 0) {
       const prev = items[editingIndex];
       if (prev._rawItemRow) item._rawItemRow = prev._rawItemRow;
@@ -293,6 +764,7 @@ function bindForm() {
     } else {
       items.push(item);
     }
+    saveItemsToStorage();
     resetForm(true); // 仕入先を保持
     renderTable(); // リスト更新・編集ハイライト解除
   });
@@ -704,7 +1176,7 @@ function bindComboSupplier() {
 }
 
 function bindDepartmentChange() {
-  el.department.addEventListener('change', () => {
+  el.department.addEventListener('change', async () => {
     if (items.length > 0) {
       el.departmentWarn.textContent = t('error.departmentLocked');
       el.department.value = selectedDepartment;
@@ -713,6 +1185,7 @@ function bindDepartmentChange() {
     el.departmentWarn.textContent = '';
     selectedDepartment = el.department.value;
     clearComboSelectionsIfInvalid();
+    await loadMastersFromApi(selectedDepartment);
     refreshClassificationCombo();
     refreshSupplierCombo();
     updateExportButtonState();
@@ -780,7 +1253,77 @@ function refreshSupplierCombo() {
   el.supplierList.innerHTML = filtered.map((r) => `<option value="${escapeHtml(r.supplierNo)}">${escapeHtml((r.abbreviation || r.nameEng || '') + ' (' + r.supplierNo + ')')}</option>`).join('');
 }
 
+/**
+ * クリップボードのテキストをパースしてアイテムを追加（Excelコピー想定: Tab区切り）
+ * カラム順: barcode, nameEng, nameTha, productGroupCode, supplierCode, unitCost, unitPrice
+ */
+function pasteItemsFromText(text) {
+  const PASTE_COL_FIELDS = ['barcode', 'nameEng', 'nameTha', 'productGroupCode', 'supplierCode', 'unitCost', 'unitPrice'];
+  const NUM_FIELDS = new Set(['unitCost', 'unitPrice', 'orderQty']);
+  const lines = text.split(/\r?\n/).filter((l) => l.trim());
+  const added = [];
+  for (const line of lines) {
+    const cols = line.split('\t');
+    if (cols.every((c) => !c.trim())) continue;
+    const item = {
+      barcode: '',
+      nameEng: '',
+      nameTha: '',
+      productGroupCode: '',
+      productGroup: '',
+      supplierCode: '',
+      supplier: '',
+      unitCost: undefined,
+      orderQty: 1,
+      leadTime: DEFAULT_LEAD_TIME,
+      unitPrice: undefined,
+      salesQty: DEFAULT_SALES_QTY,
+      taxRate: String(DEFAULT_TAX_RATE),
+      sizeEng: DEFAULT_SPEC_ENG,
+    };
+    PASTE_COL_FIELDS.forEach((field, ci) => {
+      const raw = (cols[ci] || '').trim();
+      if (raw === '') return;
+      if (NUM_FIELDS.has(field)) {
+        const n = Number(raw);
+        if (!isNaN(n)) item[field] = n;
+      } else {
+        item[field] = raw;
+      }
+    });
+    // supplier / productGroup の同期
+    item.supplier = item.supplierCode;
+    item.productGroup = item.productGroupCode;
+    if (!item.barcode) continue;
+    added.push(item);
+  }
+  if (added.length === 0) return;
+  const remaining = MAX_ITEMS - items.length;
+  const toAdd = added.slice(0, remaining);
+  saveToHistory();
+  items.push(...toAdd);
+  saveItemsToStorage();
+  renderTable();
+  if (added.length > toAdd.length) {
+    el.listMaxWarn.hidden = false;
+    el.listMaxWarn.textContent = t('error.listMax');
+  }
+}
+
 function bindTable() {
+  // テーブルセクションへのペーストイベント（contenteditable セル以外）
+  const listSection = el.tbody.closest('section');
+  if (listSection) {
+    listSection.addEventListener('paste', (e) => {
+      if (e.target.isContentEditable) return; // インライン編集中はブラウザのペーストに任せる
+      e.preventDefault();
+      const text = e.clipboardData.getData('text/plain');
+      if (text) pasteItemsFromText(text);
+    });
+    // テーブルにフォーカス可能属性を付与してペーストを受け取れるようにする
+    if (!listSection.hasAttribute('tabindex')) listSection.setAttribute('tabindex', '-1');
+  }
+
   el.selectAll.addEventListener('change', () => {
     const checked = el.selectAll.checked;
     el.tbody.querySelectorAll('input[type="checkbox"]').forEach((cb) => (cb.checked = checked));
@@ -799,7 +1342,9 @@ function bindTable() {
         editingIndex -= removedBefore;
       }
     }
+    saveToHistory();
     indexes.sort((a, b) => b - a).forEach((i) => items.splice(i, 1));
+    saveItemsToStorage();
     renderTable();
   });
 }
@@ -812,6 +1357,20 @@ function updateExportButtonState() {
   el.btnExport.disabled = errs.length > 0;
 }
 
+// グリッド直接編集: 列インデックス → アイテムフィールド名のマップ
+const GRID_COL_FIELDS = [
+  null,               // 0: checkbox
+  'barcode',          // 1
+  'nameEng',          // 2
+  'nameTha',          // 3
+  'productGroupCode', // 4
+  'pluNo',            // 5
+  'supplier',         // 6
+  'orderQty',         // 7
+  'unitCost',         // 8
+  'unitPrice',        // 9
+];
+
 function renderTable() {
   const isRawMaterial = selectedProductType === PRODUCT_TYPE_RAW_MATERIAL;
   el.tbody.innerHTML = '';
@@ -819,28 +1378,166 @@ function renderTable() {
     const tr = document.createElement('tr');
     tr.dataset.index = i;
     tr.classList.toggle('selected', i === editingIndex);
-    tr.innerHTML = `
-      <td><input type="checkbox" class="row-check" /></td>
-      <td class="cell-barcode">${escapeHtml(item.barcode || '')}</td>
-      <td class="cell-name" title="${escapeHtml(item.nameEng || '')}">${escapeHtml((item.nameEng || '').slice(0, 50))}${(item.nameEng || '').length > 50 ? '…' : ''}</td>
-      <td class="cell-name" title="${escapeHtml(item.nameTha || '')}">${escapeHtml((item.nameTha || '').slice(0, 50))}${(item.nameTha || '').length > 50 ? '…' : ''}</td>
-      <td>${escapeHtml(item.productGroupCode || '')}</td>
-      <td class="col-plu">${escapeHtml(item.pluNo != null ? item.pluNo : '')}</td>
-      <td class="col-supplier cell-name" title="${escapeHtml(item.supplier || item.supplierCode || '')}">${escapeHtml((item.supplier || item.supplierCode || '').slice(0, 30))}${(item.supplier || item.supplierCode || '').length > 30 ? '…' : ''}</td>
-      <td class="col-orderQty">${escapeHtml(String(isRawMaterial ? (item.orderUnit || '') : (item.orderQty != null ? item.orderQty : '')))}</td>
-      <td class="col-cost">${item.unitCost != null ? item.unitCost : ''}</td>
-      <td class="col-price">${item.unitPrice != null ? item.unitPrice : ''}</td>
-    `;
-    const startEdit = (e) => {
-      if (e.target.closest('input[type="checkbox"]')) return;
-      startEditRow(i);
-    };
-    tr.addEventListener('click', startEdit);
+
+    // チェックボックス列
+    const tdCheck = document.createElement('td');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.className = 'row-check';
+    tdCheck.appendChild(cb);
+    tr.appendChild(tdCheck);
+
+    // データ列
+    // 分類コードがマスタに存在するかチェック
+    const groupMasterForDept = getGroupMasterForDepartment(selectedDepartment);
+    const groupCodeValid = !item.productGroupCode || groupMasterForDept.some((r) => r.productGroupCode === item.productGroupCode);
+
+    const cols = [
+      { cls: 'cell-barcode', val: item.barcode || '' },
+      { cls: 'cell-name', val: item.nameEng || '', truncate: 50 },
+      { cls: 'cell-name', val: item.nameTha || '', truncate: 50 },
+      { cls: groupCodeValid ? '' : 'cell-invalid', val: item.productGroupCode || '', title: groupCodeValid ? '' : '分類コードがマスタに存在しません' },
+      { cls: 'col-plu', val: item.pluNo != null ? String(item.pluNo) : '' },
+      { cls: 'col-supplier cell-name', val: (item.supplier || item.supplierCode || ''), truncate: 30 },
+      { cls: 'col-orderQty', val: String(isRawMaterial ? (item.orderUnit || '') : (item.orderQty != null ? item.orderQty : '')) },
+      { cls: 'col-cost', val: item.unitCost != null ? String(item.unitCost) : '' },
+      { cls: 'col-price', val: item.unitPrice != null ? String(item.unitPrice) : '' },
+    ];
+    cols.forEach((col) => {
+      const td = document.createElement('td');
+      if (col.cls) td.className = col.cls;
+      if (col.title) td.title = col.title;
+      if (col.truncate && col.val.length > col.truncate) {
+        td.title = col.val;
+        td.textContent = col.val.slice(0, col.truncate) + '…';
+      } else {
+        td.textContent = col.val;
+      }
+      tr.appendChild(td);
+    });
+
+    // 操作列：行コピーボタン
+    const tdAction = document.createElement('td');
+    tdAction.className = 'col-action';
+    const btnCopy = document.createElement('button');
+    btnCopy.type = 'button';
+    btnCopy.textContent = 'コピー';
+    btnCopy.className = 'btn-row-copy';
+    btnCopy.addEventListener('click', () => copyRow(i));
+    tdAction.appendChild(btnCopy);
+    tr.appendChild(tdAction);
+
     el.tbody.appendChild(tr);
   });
   el.listMaxWarn.hidden = items.length < MAX_ITEMS;
   if (items.length >= MAX_ITEMS) el.listMaxWarn.textContent = t('error.listMax');
   updateExportButtonState();
+}
+
+/**
+ * セルをインライン編集モードにする
+ * @param {HTMLTableCellElement} td
+ * @param {number} itemIndex
+ * @param {number} colIndex - GRID_COL_FIELDS のインデックス
+ */
+function startInlineCellEdit(td, itemIndex, colIndex) {
+  const field = GRID_COL_FIELDS[colIndex];
+  if (!field) return;
+  if (td.contentEditable === 'true') return; // 既に編集中
+  const item = items[itemIndex];
+  if (!item) return;
+
+  const original = String(item[field] != null ? item[field] : '');
+  td.textContent = original;
+  td.contentEditable = 'true';
+  td.classList.add('cell-editing');
+  td.focus();
+
+  // カーソルを末尾に
+  const range = document.createRange();
+  const sel = window.getSelection();
+  range.selectNodeContents(td);
+  range.collapse(false);
+  sel.removeAllRanges();
+  sel.addRange(range);
+
+  function commitEdit() {
+    if (td.contentEditable !== 'true') return;
+    td.contentEditable = 'false';
+    td.classList.remove('cell-editing');
+    const newVal = td.textContent.trim();
+    if (field === 'unitCost' || field === 'unitPrice' || field === 'orderQty') {
+      const num = newVal === '' ? undefined : Number(newVal);
+      item[field] = isNaN(num) ? item[field] : (newVal === '' ? undefined : num);
+    } else {
+      item[field] = newVal;
+      if (field === 'supplier') item.supplierCode = newVal;
+      if (field === 'productGroupCode') item.productGroup = newVal;
+    }
+    saveItemsToStorage();
+    const displayVal = item[field] != null ? String(item[field]) : '';
+    if (td.className.includes('cell-name') && displayVal.length > 50) {
+      td.title = displayVal;
+      td.textContent = displayVal.slice(0, 50) + '…';
+    } else {
+      td.textContent = displayVal;
+    }
+    updateExportButtonState();
+  }
+
+  function cancelEdit() {
+    if (td.contentEditable !== 'true') return;
+    td.contentEditable = 'false';
+    td.classList.remove('cell-editing');
+    td.textContent = original;
+  }
+
+  // (rowDelta, colDelta) 方向の次セルを取得
+  function findNextCell(rowDelta, colDelta) {
+    let r = itemIndex + rowDelta;
+    let c = colIndex + colDelta;
+    if (colDelta !== 0) {
+      // null 列をスキップ
+      while (c > 0 && c < GRID_COL_FIELDS.length && GRID_COL_FIELDS[c] === null) c += colDelta;
+      // 行末/行頭を超えたら次/前の行の先頭/末尾セルへ
+      if (c < 1 || c >= GRID_COL_FIELDS.length) {
+        r = itemIndex + (colDelta > 0 ? 1 : -1);
+        if (colDelta > 0) {
+          c = GRID_COL_FIELDS.findIndex((f, idx) => idx > 0 && f !== null);
+        } else {
+          c = GRID_COL_FIELDS.length - 1;
+          while (c > 0 && GRID_COL_FIELDS[c] === null) c--;
+        }
+      }
+    }
+    if (r < 0 || r >= items.length) return null;
+    if (c < 1 || c >= GRID_COL_FIELDS.length || !GRID_COL_FIELDS[c]) return null;
+    const nextTr = el.tbody.rows[r];
+    if (!nextTr) return null;
+    return { td: nextTr.cells[c], itemIndex: r, colIndex: c };
+  }
+
+  td.addEventListener('blur', commitEdit, { once: true });
+
+  const onKeydown = (e) => {
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      td.removeEventListener('keydown', onKeydown);
+      commitEdit();
+      const next = findNextCell(0, e.shiftKey ? -1 : 1);
+      if (next) startInlineCellEdit(next.td, next.itemIndex, next.colIndex);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      td.removeEventListener('keydown', onKeydown);
+      commitEdit();
+      const next = findNextCell(e.shiftKey ? -1 : 1, 0);
+      if (next) startInlineCellEdit(next.td, next.itemIndex, next.colIndex);
+    } else if (e.key === 'Escape') {
+      td.removeEventListener('keydown', onKeydown);
+      cancelEdit();
+    }
+  };
+  td.addEventListener('keydown', onKeydown);
 }
 
 function startEditRow(i) {
@@ -850,6 +1547,83 @@ function startEditRow(i) {
   el.tbody.querySelectorAll('tr').forEach((row, idx) => {
     row.classList.toggle('selected', idx === i);
   });
+}
+
+function copyRow(i) {
+  if (items.length >= MAX_ITEMS) return;
+  saveToHistory();
+  const copy = { ...items[i], barcode: '' }; // バーコードはクリア（一意性確保）
+  items.splice(i + 1, 0, copy);
+  saveItemsToStorage();
+  renderTable();
+}
+
+function applyImportReplace(parsed) {
+  saveToHistory();
+  items = parsed.slice();
+  saveItemsToStorage();
+  editingIndex = -1;
+  el.btnAdd.textContent = t('btn.add');
+  renderTable();
+  el.exportErrors.hidden = true;
+  updateHistoryButtons();
+}
+
+function applyImportMerge(parsed) {
+  saveToHistory();
+  const barcodeMap = new Map(items.map((item, idx) => [item.barcode, idx]));
+  for (const imported of parsed) {
+    if (imported.barcode && barcodeMap.has(imported.barcode)) {
+      items[barcodeMap.get(imported.barcode)] = { ...items[barcodeMap.get(imported.barcode)], ...imported };
+    } else {
+      if (items.length < MAX_ITEMS) items.push(imported);
+    }
+  }
+  saveItemsToStorage();
+  renderTable();
+  el.exportErrors.hidden = true;
+  updateHistoryButtons();
+}
+
+async function logExportToServer(dept, exportItems, filename) {
+  try {
+    await fetch('/api/log/export', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        dept,
+        itemCount: exportItems.length,
+        filename,
+        items: exportItems.map((it) => ({
+          barcode: it.barcode,
+          nameEng: it.nameEng,
+          nameTha: it.nameTha,
+          productGroupCode: it.productGroupCode,
+          supplierCode: it.supplierCode,
+          unitCost: it.unitCost,
+          unitPrice: it.unitPrice,
+        })),
+      }),
+    });
+  } catch {
+    // ログ失敗は無視
+  }
+}
+
+function startSessionPolling() {
+  setInterval(async () => {
+    try {
+      const res = await fetch('/api/auth/status', { credentials: 'include' });
+      if (!res.ok) return;
+      const status = await res.json();
+      if (status.externalAuth && !status.loggedIn) {
+        if (el.sessionExpiredModal) el.sessionExpiredModal.hidden = false;
+      }
+    } catch {
+      // ネットワークエラーは無視
+    }
+  }, 5 * 60 * 1000);
 }
 
 function fillForm(item) {
@@ -915,13 +1689,15 @@ function bindOutput() {
     }
     el.exportErrors.hidden = true;
     const name = el.outputFilename.value.trim();
+    const exportFilename = name || buildDefaultOutputFilename(selectedDepartment);
     exportXlsx(items, selectedDepartment, {
       sheetItem: el.outItem.checked,
       sheetAdditional: !isScale && !isRawMaterial && el.outSecond?.checked,
       sheetIshida: isScale && el.outSecond?.checked,
       productType: selectedProductType,
-      filename: name || buildDefaultOutputFilename(selectedDepartment),
+      filename: exportFilename,
     });
+    logExportToServer(selectedDepartment, items, exportFilename);
     showExportSuccessModal();
   });
   if (el.exportSuccessModal) {
@@ -953,11 +1729,18 @@ function bindOutput() {
           el.exportErrors.textContent = getLang() === 'ja' ? '有効なItemシートがありません' : 'No valid Item sheet';
           return;
         }
-        // インポート時は既存リストを全置換する
-        items = parsed.slice();
-        editingIndex = -1;
-        el.btnAdd.textContent = t('btn.add');
-        renderTable();
+        pendingImportItems = parsed;
+        if (el.importModeModal) {
+          const isRawMaterial = selectedProductType === PRODUCT_TYPE_RAW_MATERIAL;
+          if (el.importModeDesc) {
+            el.importModeDesc.textContent = isRawMaterial
+              ? `${parsed.length}件読み込みました。既存リストに統合（バーコード照合）しますか？`
+              : `${parsed.length}件読み込みました。インポートモードを選択してください。`;
+          }
+          el.importModeModal.hidden = false;
+        } else {
+          applyImportReplace(parsed);
+        }
         el.exportErrors.hidden = true;
       } catch (err) {
         el.exportErrors.hidden = false;
@@ -1112,12 +1895,16 @@ function escapeHtml(s) {
   return div.innerHTML;
 }
 
-/** スプレッドシートから分類・仕入先マスタを読み込み。失敗時はサンプルデータを使用 */
-async function loadMastersFromSheet() {
-  const result = await fetchMastersFromSheet();
+/** DBからマスタを読み込み。失敗時はサンプルデータを使用しバナーを表示 */
+async function loadMastersFromApi(dept) {
+  const result = await fetchMastersFromApi(dept || selectedDepartment);
   if (result && (result.group.length > 0 || result.supplier.length > 0)) {
     setGroupMaster(result.group);
     setSupplierMaster(result.supplier);
+    if (el.masterStatus) {
+      el.masterStatus.textContent = '';
+      el.masterStatus.hidden = true;
+    }
   } else {
     setGroupMaster([
       { productGroupCode: '110113001', description: 'Coffee', descriptionTha: 'กาแฟ' },
@@ -1128,8 +1915,11 @@ async function loadMastersFromSheet() {
       { supplierNo: '11100090', abbreviation: 'AJINOMOTO', nameEng: 'Ajinomoto', nameTha: 'อายิโนะโมะโต๊ะ' },
       { supplierNo: '11100091', abbreviation: 'NESTLE', nameEng: 'Nestle', nameTha: 'เนสเล่' },
     ]);
+    if (el.masterStatus) {
+      el.masterStatus.textContent = '⚠ サンプルデータを使用中（DBに接続できません）';
+      el.masterStatus.hidden = false;
+    }
   }
-  if (el.masterStatus) el.masterStatus.hidden = true;
 }
 
 init();

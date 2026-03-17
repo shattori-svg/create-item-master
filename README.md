@@ -35,6 +35,32 @@ npm run build
 
 `dist/` に静的ファイルが出力されます。任意の Web サーバーで配信できます。
 
+### 認証付きサーバー起動（Entra ID）
+
+本番同等の認証付き起動は次を使います。
+
+```bash
+npm run build
+npm run start
+```
+
+`http://localhost:8080` で起動します。
+
+必須環境変数（Entra ID 有効化）:
+
+- `ENTRA_CLIENT_ID`
+- `ENTRA_CLIENT_SECRET`
+- `ENTRA_TENANT_ID`
+- `ENTRA_REDIRECT_URI`
+- `SESSION_SECRET`（推奨: 32文字以上ランダム）
+
+任意:
+
+- `ENTRA_TENANT_GUID`
+- `ENTRA_ALLOWED_DOMAIN`
+- `USERS_FILE`（既定: `data/users.json`）
+- `PORT`（既定: `8080`）
+
 ### Cloud Run へのデプロイ
 
 gcloud CLI でログイン・プロジェクト設定済みの状態で実行します。

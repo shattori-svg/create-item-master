@@ -48,6 +48,15 @@ html, body { height: 100%; overflow: hidden; }
   flex-shrink: 0;
 }
 .lang-switch { display: flex; gap: 0.5rem; }
+.auth-user {
+  align-self: center;
+  font-size: 12px;
+  color: #444;
+  max-width: 200px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .lang-btn {
   padding: 0.4rem 0.8rem;
   border: 1px solid var(--border);
@@ -402,6 +411,112 @@ input.readonly, input[readonly] {
   max-width: 400px;
   width: 90%;
 }
+.modal-content--wide {
+  max-width: 860px;
+  width: 95%;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* プロフィール設定モーダル */
+.profile-input {
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 14px;
+}
+.profile-input:focus { outline: 2px solid var(--primary); border-color: var(--primary); }
+
+/* 管理者ボタン */
+.btn-admin {
+  background: #7c3aed;
+  color: #fff;
+  border-color: #7c3aed;
+}
+.btn-admin:hover { filter: brightness(1.1); }
+
+/* 管理者パネル */
+.admin-table-wrap {
+  overflow: auto;
+  flex: 1;
+  margin: 0.75rem 0;
+}
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.admin-table th,
+.admin-table td {
+  border: 1px solid var(--border);
+  padding: 0.4rem 0.6rem;
+  vertical-align: top;
+}
+.admin-table th { background: var(--step-bg); font-weight: 600; white-space: nowrap; }
+.admin-select {
+  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 13px;
+}
+.admin-dept-cell { min-width: 260px; }
+.admin-dept-wrap { display: flex; flex-wrap: wrap; gap: 0.3rem 0.75rem; }
+.admin-dept-label { display: flex; align-items: center; gap: 0.25rem; cursor: pointer; white-space: nowrap; }
+.btn-admin-save {
+  padding: 0.3rem 0.75rem;
+  border: 1px solid var(--primary);
+  border-radius: var(--radius);
+  background: var(--primary);
+  color: #fff;
+  cursor: pointer;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.btn-admin-save:hover { filter: brightness(1.1); }
+
+/* 管理者タブ */
+.admin-tabs { display: flex; gap: 0.25rem; border-bottom: 2px solid var(--border); margin-bottom: 1rem; }
+.admin-tab {
+  padding: 0.4rem 1rem;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--text-muted, #666);
+  border-bottom: 3px solid transparent;
+  margin-bottom: -2px;
+}
+.admin-tab--active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+.admin-tab-panel { min-height: 120px; }
+
+/* マスタインポート */
+.master-import-section { display: flex; flex-direction: column; gap: 1.25rem; }
+.master-import-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+  background: var(--step-bg);
+}
+.master-import-title { margin: 0 0 0.4rem; font-size: 15px; font-weight: 600; }
+.master-import-desc { margin: 0 0 0.75rem; font-size: 13px; color: var(--text-muted, #555); }
+.master-import-desc code { background: #e5e7eb; border-radius: 3px; padding: 0.1em 0.35em; font-size: 12px; }
+.master-import-row { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.master-import-file { flex: 1; min-width: 200px; font-size: 13px; }
+.master-import-status { margin: 0.5rem 0 0; font-size: 13px; font-weight: 600; }
+.master-import-status--ok { color: #16a34a; }
+.master-import-status--err { color: #dc2626; }
+
+/* グリッドインライン編集 */
+.cell-editing {
+  outline: 2px solid var(--primary);
+  background: #eff6ff;
+  min-width: 60px;
+  white-space: nowrap;
+  cursor: text;
+}
+#item-tbody td[contenteditable]:focus { outline: 2px solid var(--primary); }
 .modal-title { margin: 0 0 0.5rem; font-size: 1.1rem; }
 .modal-text { margin: 0 0 1.25rem; color: #444; font-size: 14px; }
 .modal-actions { display: flex; gap: 0.75rem; flex-wrap: wrap; }
@@ -454,4 +569,54 @@ input.readonly, input[readonly] {
 .numpad-key:hover { background: #eee; }
 .numpad-key:active { background: #e0e0e0; }
 .numpad-backspace { font-size: 12px; }
+
+/* 分類コードバリデーション */
+.cell-invalid {
+  background: #fef2f2;
+  color: #b91c1c;
+  outline: 1px solid #fca5a5;
+}
+
+/* 行コピーボタン */
+.col-action { width: 60px; text-align: center; white-space: nowrap; }
+.btn-row-copy {
+  padding: 0.2rem 0.5rem;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  cursor: pointer;
+  color: #444;
+}
+.btn-row-copy:hover { background: #f0f0f0; }
+
+/* Undo/Redo ボタン */
+.btn-history {
+  padding: 0.3rem 0.6rem;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  cursor: pointer;
+  color: #444;
+  line-height: 1;
+}
+.btn-history:hover:not(:disabled) { background: #f0f0f0; }
+.btn-history:disabled { opacity: 0.4; cursor: default; }
+
+/* 操作ログテーブル */
+.admin-logs-content { overflow-x: auto; }
+.admin-logs-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.admin-logs-table th,
+.admin-logs-table td {
+  border: 1px solid var(--border);
+  padding: 0.35rem 0.6rem;
+  white-space: nowrap;
+}
+.admin-logs-table th { background: var(--step-bg); font-weight: 600; }
+.admin-logs-error { color: var(--error); }
 .numpad-clear { grid-column: span 2; width: auto; background: #f5f5f5; }

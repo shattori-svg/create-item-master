@@ -56,7 +56,7 @@ function itemToRow(item, departmentCode, options = {}) {
   const postingGroup = productType === 'rawMaterial'
     ? 'MATERIAL'
     : getPostingGroupByDepartment(departmentCode);
-  const inventoryType = productType === 'rawMaterial'
+  const inventoryType = (productType === 'rawMaterial' || departmentCode !== '01')
     ? 'Non-Inventory'
     : ITEM_FIXED.inventoryType;
   const baseUnitOfMeasure = productType === 'rawMaterial'

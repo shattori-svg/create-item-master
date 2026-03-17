@@ -3,3 +3,5 @@ dist
 .git
 .cursor
 *.log
+.env
+.env.local
