@@ -83,7 +83,8 @@ function itemToRow(item, departmentCode, options = {}) {
     '',
     ITEM_FIXED.height, ITEM_FIXED.width, ITEM_FIXED.length, ITEM_FIXED.weight,
     inventoryType, postingGroup, postingGroup, vat,
-    item.supplierCode || '', // 23: Vendor No. (default)
+    // "Name (CODE)" 形式が混入していた場合はコード部分のみ抽出
+    (item.supplierCode ? String(item.supplierCode).replace(/^.*[（(]([^）)]+)[）)]\s*$/, '$1').trim() : ''), // 23: Vendor No. (default)
     null, // 24: Vendor Item No. (default) は上書きしない
     item.unitCost != null ? Number(item.unitCost) : '', // 25: Unit Cost (default)
     ITEM_FIXED.autoReplenishment,
