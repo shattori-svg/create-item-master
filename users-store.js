@@ -68,11 +68,19 @@ export function updateUserPreferences(userId, preferences = {}) {
   const idx = data.users.findIndex((u) => Number(u.id) === Number(userId));
   if (idx < 0) return null;
   const current = data.users[idx];
+  const newDept = preferences.preferredDepartment ?? current.preferred_department ?? '';
+  // 許可部門が未設定の場合は preferredDepartment を自動的に許可部門に追加する
+  const currentAllowed = Array.isArray(current.allowed_departments) ? current.allowed_departments : [];
+  const allowedDepartments =
+    currentAllowed.length === 0 && newDept
+      ? [newDept]
+      : currentAllowed;
   const updated = {
     ...current,
     display_name: preferences.displayName ?? current.display_name ?? '',
     preferred_store: preferences.preferredStore ?? current.preferred_store ?? '',
-    preferred_department: preferences.preferredDepartment ?? current.preferred_department ?? '',
+    preferred_department: newDept,
+    allowed_departments: allowedDepartments,
     updated_at: new Date().toISOString(),
   };
   data.users[idx] = updated;

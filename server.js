@@ -161,8 +161,14 @@ app.put('/api/me/preferences', requireAuth, (req, res) => {
   req.session.displayName = updated.display_name || '';
   req.session.preferredStore = updated.preferred_store || '';
   req.session.preferredDepartment = updated.preferred_department || '';
+  req.session.allowedDepartments = Array.isArray(updated.allowed_departments) ? updated.allowed_departments : [];
   req.session.needsProfileSetup = !(updated.preferred_store && updated.preferred_department);
-  return res.json({ ok: true, needsProfileSetup: req.session.needsProfileSetup });
+  return res.json({
+    ok: true,
+    needsProfileSetup: req.session.needsProfileSetup,
+    allowedDepartments: req.session.allowedDepartments,
+    preferredDepartment: req.session.preferredDepartment,
+  });
 });
 
 // Protect all app/API paths except auth entrypoints.

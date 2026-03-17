@@ -611,12 +611,18 @@ function setupInitialProfile(status) {
       }
       el.btnProfileSave.disabled = true;
       try {
-        await fetch('/api/me/preferences', {
+        const resp = await fetch('/api/me/preferences', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
           body: JSON.stringify({ preferredStore, preferredDepartment }),
         });
+        const body = await resp.json().catch(() => ({}));
+        // 保存後に currentAuthStatus を更新（fillDepartmentSelect が正しく動くように）
+        if (currentAuthStatus) {
+          currentAuthStatus.preferredDepartment = body.preferredDepartment || preferredDepartment;
+          currentAuthStatus.allowedDepartments = body.allowedDepartments || [preferredDepartment];
+        }
         el.profileSetupModal.hidden = true;
         resolve();
       } catch {
