@@ -8,6 +8,7 @@ import { createClient } from '@supabase/supabase-js';
 import * as XLSX from 'xlsx';
 import * as entraAuth from './entra-auth.js';
 import {
+  init as initUsersStore,
   createUserFromEmail,
   findUserByUsername,
   listUsers,
@@ -23,6 +24,9 @@ const supabase = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
   : null;
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+// Supabase クライアントをユーザーストアに注入
+initUsersStore(supabase);
 
 const app = express();
 const PORT = Number(process.env.PORT || 8080);
@@ -121,8 +125,8 @@ app.get('/auth/callback', async (req, res) => {
     if (!email) return res.status(401).send('Email claim is missing');
     if (!entraAuth.isAllowedEmail(email)) return res.status(403).send('This account is not allowed');
 
-    let user = findUserByUsername(email);
-    if (!user) user = createUserFromEmail(email);
+    let user = await findUserByUsername(email);
+    if (!user) user = await createUserFromEmail(email);
 
     req.session.loggedIn = true;
     req.session.userId = user.id;
@@ -150,9 +154,9 @@ app.get('/api/auth/status', (req, res) => {
   res.json(sessionUser(req));
 });
 
-app.put('/api/me/preferences', requireAuth, (req, res) => {
+app.put('/api/me/preferences', requireAuth, async (req, res) => {
   const body = req.body || {};
-  const updated = updateUserPreferences(req.session.userId, {
+  const updated = await updateUserPreferences(req.session.userId, {
     displayName: body.displayName ?? req.session.displayName ?? '',
     preferredStore: body.preferredStore ?? req.session.preferredStore ?? '',
     preferredDepartment: body.preferredDepartment ?? req.session.preferredDepartment ?? '',
@@ -180,27 +184,31 @@ app.use((req, res, next) => {
 
 // --- Admin: User Management API ---
 
-app.get('/api/admin/users', requireAdmin, (req, res) => {
-  const users = listUsers().map((u) => ({
-    id: u.id,
-    username: u.username,
-    display_name: u.display_name || '',
-    role: u.role || 'user',
-    allowed_departments: u.allowed_departments || [],
-    created_at: u.created_at,
-    updated_at: u.updated_at,
-  }));
-  return res.json(users);
+app.get('/api/admin/users', requireAdmin, async (req, res) => {
+  try {
+    const users = (await listUsers()).map((u) => ({
+      id: u.id,
+      username: u.username,
+      display_name: u.display_name || '',
+      role: u.role || 'user',
+      allowed_departments: u.allowed_departments || [],
+      created_at: u.created_at,
+      updated_at: u.updated_at,
+    }));
+    return res.json(users);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
-app.put('/api/admin/users/:id', requireAdmin, (req, res) => {
+app.put('/api/admin/users/:id', requireAdmin, async (req, res) => {
   const targetId = Number(req.params.id);
   const body = req.body || {};
   const updates = {};
   if (body.role !== undefined) updates.role = body.role;
   if (body.allowed_departments !== undefined) updates.allowed_departments = body.allowed_departments;
   try {
-    const updated = updateUserByAdmin(targetId, updates);
+    const updated = await updateUserByAdmin(targetId, updates);
     if (!updated) return res.status(404).json({ error: 'user_not_found' });
     return res.json({ ok: true, user: updated });
   } catch (err) {
