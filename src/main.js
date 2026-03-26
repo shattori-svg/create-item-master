@@ -13,26 +13,7 @@ import { validateFormFields, validateForExport } from './lib/validation.js';
 import { exportXlsx, parseItemSheet } from './lib/excel.js';
 
 // --- State ---
-const STORAGE_KEY_ITEMS = 'item_import_items_v1';
-
-function saveItemsToStorage() {
-  try {
-    localStorage.setItem(STORAGE_KEY_ITEMS, JSON.stringify(items));
-  } catch {
-    // ignore
-  }
-}
-
-function loadItemsFromStorage() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_ITEMS);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
-
-let items = loadItemsFromStorage();
+let items = [];
 let selectedDepartment = '01';
 let selectedProductType = PRODUCT_TYPE_MANUFACTURER;
 let editingIndex = -1;
@@ -59,7 +40,6 @@ function undo() {
   if (undoStack.length === 0) return;
   redoStack.push(JSON.stringify(items));
   items = JSON.parse(undoStack.pop());
-  saveItemsToStorage();
   editingIndex = -1;
   renderTable();
   updateExportButtonState();
@@ -70,7 +50,6 @@ function redo() {
   if (redoStack.length === 0) return;
   undoStack.push(JSON.stringify(items));
   items = JSON.parse(redoStack.pop());
-  saveItemsToStorage();
   editingIndex = -1;
   renderTable();
   updateExportButtonState();
@@ -804,7 +783,6 @@ function bindForm() {
     } else {
       items.push(item);
     }
-    saveItemsToStorage();
     resetForm(true); // 仕入先を保持
     renderTable(); // リスト更新・編集ハイライト解除
   });
@@ -1366,7 +1344,6 @@ function pasteItemsFromText(text) {
   const toAdd = added.slice(0, remaining);
   saveToHistory();
   items.push(...toAdd);
-  saveItemsToStorage();
   renderTable();
   if (added.length > toAdd.length) {
     el.listMaxWarn.hidden = false;
@@ -1396,7 +1373,6 @@ function bindTable() {
       items = [];
       editingIndex = -1;
       el.btnAdd.textContent = t('btn.add');
-      saveItemsToStorage();
       renderTable();
     });
   }
@@ -1453,7 +1429,6 @@ function renderTable() {
         editingIndex--;
       }
       items.splice(i, 1);
-      saveItemsToStorage();
       renderTable();
     });
     tdDel.appendChild(btnRowDel);
@@ -1550,7 +1525,6 @@ function startInlineCellEdit(td, itemIndex, colIndex) {
       if (field === 'supplier') item.supplierCode = newVal;
       if (field === 'productGroupCode') item.productGroup = newVal;
     }
-    saveItemsToStorage();
     const displayVal = item[field] != null ? String(item[field]) : '';
     if (td.className.includes('cell-name') && displayVal.length > 50) {
       td.title = displayVal;
@@ -1638,7 +1612,6 @@ function copyRow(i) {
 function applyImportReplace(parsed) {
   saveToHistory();
   items = parsed.slice();
-  saveItemsToStorage();
   editingIndex = -1;
   el.btnAdd.textContent = t('btn.add');
   renderTable();
@@ -1656,7 +1629,6 @@ function applyImportMerge(parsed) {
       if (items.length < MAX_ITEMS) items.push(imported);
     }
   }
-  saveItemsToStorage();
   renderTable();
   el.exportErrors.hidden = true;
   updateHistoryButtons();
