@@ -4,6 +4,7 @@
     "optional": "ไม่บังคับ",
     "department": "แผนก",
     "productType": "ประเภทสินค้า",
+    "deliveryDest": "จุดส่งสินค้า",
     "pluNo": "หมายเลขเรียก (PLU)",
     "classification": "รหัสหมวดหมู่",
     "barcode": "บาร์โค้ด",
@@ -27,14 +28,17 @@
     "casePrice": "ราคาขายกล่อง",
     "brandEng": "แบรนด์ (อังกฤษ)",
     "brandTha": "แบรนด์ (ไทย)",
-    "outputFilename": "ชื่อไฟล์"
+    "outputFilename": "ชื่อไฟล์",
+    "grossMargin": "กำไรขั้นต้น"
   },
   "option": {
     "manufacturingLocationInstore": "ร้านค้า",
     "manufacturingLocationCkpc": "CK/PC",
     "orderUnitPcs": "PCS",
     "orderUnitCtn": "CTN",
-    "orderUnitKg": "KG"
+    "orderUnitKg": "KG",
+    "deliveryDestStore": "ร้านค้า",
+    "deliveryDestCkpc": "CK/PC"
   },
   "legend": {
     "required": "บังคับ",
@@ -73,7 +77,52 @@
     "edit": "แก้ไข",
     "logout": "ออกจากระบบ",
     "goToImport": "ไปหน้านำเข้า",
-    "close": "ปิด"
+    "close": "ปิด",
+    "save": "บันทึก",
+    "saved": "✓ บันทึกแล้ว",
+    "copy": "คัดลอก",
+    "deleteAll": "ลบทั้งหมด",
+    "undo": "↩ เลิกทำ",
+    "redo": "↪ ทำซ้ำ",
+    "processing": "กำลังประมวลผล…"
+  },
+  "admin": {
+    "settings": "ตั้งค่าผู้ดูแลระบบ",
+    "userManagement": "จัดการผู้ใช้",
+    "masterManagement": "จัดการมาสเตอร์",
+    "operationLog": "ประวัติการทำงาน",
+    "emailHeader": "อีเมล",
+    "displayNameHeader": "ชื่อที่แสดง",
+    "roleHeader": "บทบาท",
+    "allowedDeptHeader": "แผนกที่อนุญาต",
+    "actionHeader": "ดำเนินการ",
+    "roleAdmin": "ผู้ดูแลระบบ",
+    "roleUser": "ผู้ใช้ทั่วไป",
+    "loading": "กำลังโหลด…",
+    "tabLoading": "เปิดแท็บเพื่อโหลด",
+    "noLogs": "ไม่มีประวัติ",
+    "loadFailed": "ดึงข้อมูลล้มเหลว: ",
+    "import": "นำเข้า",
+    "download": "ดาวน์โหลด",
+    "saveFailed": "บันทึกล้มเหลว: ",
+    "userListFailed": "ดึงรายการผู้ใช้ล้มเหลว: ",
+    "selectFile": "กรุณาเลือกไฟล์",
+    "importSuccess": "✓ นำเข้า {n} รายการแล้ว",
+    "importError": "ข้อผิดพลาด: ",
+    "selectPlaceholder": "-- กรุณาเลือก --"
+  },
+  "modal": {
+    "cancel": "ยกเลิก",
+    "sessionExpiredTitle": "เซสชันหมดอายุ",
+    "sessionExpiredDesc": "เซสชันล็อกอินหมดอายุแล้ว ข้อมูลที่ป้อนไว้ยังคงบันทึกในเบราว์เซอร์ กรุณาล็อกอินใหม่เพื่อดำเนินการต่อ",
+    "loginPage": "ไปหน้าล็อกอิน",
+    "profileSetupTitle": "การตั้งค่าครั้งแรก",
+    "profileSetupDesc": "กรุณาเลือกร้านค้าและแผนกที่ดูแล",
+    "store": "ร้านค้า",
+    "dept": "แผนกที่ดูแล",
+    "selectStore": "กรุณาเลือกร้านค้า",
+    "selectDept": "กรุณาเลือกแผนกที่ดูแล",
+    "profileSaveFailed": "บันทึกล้มเหลว กรุณาลองอีกครั้ง"
   },
   "error": {
     "required": "กรุณากรอก",
@@ -84,17 +133,48 @@
     "nameMaxLength": "กรุณากรอกไม่เกิน 60 ตัวอักษร",
     "numeric": "กรุณากรอกตัวเลข",
     "listMax": "รายการสูงสุด 100 รายการ",
-    "departmentLocked": "ไม่สามารถเปลี่ยนแผนกเมื่อมีสินค้าในรายการ กรุณาล้างรายการก่อน",
-    "productTypeLocked": "ไม่สามารถเปลี่ยนประเภทสินค้าเมื่อมีสินค้าในรายการ",
-    "caseRequired": "เมื่อจำนวนขายตั้งแต่ 2 ขึ้นไป กรุณากรอกบาร์โค้ดกล่องและราคาขายกล่อง"
+    "caseRequired": "เมื่อจำนวนขายตั้งแต่ 2 ขึ้นไป กรุณากรอกบาร์โค้ดกล่องและราคาขายกล่อง",
+    "importNoItemSheet": "ไม่มีชีต Item ที่ถูกต้อง",
+    "importReadError": "ข้อผิดพลาดในการนำเข้า: ",
+    "groupCodeNotFound": "ไม่พบรหัสหมวดหมู่ในมาสเตอร์",
+    "importValidationFailed": "ข้อผิดพลาดในการตรวจสอบนำเข้า:",
+    "importDeptMismatch": "รหัสแผนกไม่ตรงกัน",
+    "importClassMismatch": "หมวดหมู่ไม่ตรงกับแผนก",
+    "importTypeMismatch": "ประเภทสินค้าไม่ตรงกัน"
   },
   "msg": {
     "importSuccess": "นำเข้าเรียบร้อย",
-    "importReplace": "แทนที่รายการหรือไม่?",
-    "importAppend": "เพิ่มต่อท้ายรายการ",
     "suggestByAI": "แนะนำโดย AI",
     "suggestByKeyword": "แนะนำจากคำค้น",
     "exportDone": "ส่งออกไฟล์เรียบร้อยแล้ว",
-    "exportDoneDetail": "กรุณานำเข้าที่หน้านำเข้า"
+    "exportDoneDetail": "กรุณานำเข้าที่หน้านำเข้า",
+    "deleteAllConfirm": "ต้องการลบทั้งหมด {n} รายการหรือไม่?",
+    "changeSettingConfirm": "รายการสินค้าจะถูกลบ ต้องการเปลี่ยนหรือไม่?",
+    "sampleDataWarning": "⚠ ใช้ข้อมูลตัวอย่าง (ไม่สามารถเชื่อมต่อ DB)"
+  },
+  "log": {
+    "datetime": "วันที่และเวลา",
+    "user": "ผู้ใช้",
+    "dept": "แผนก",
+    "count": "จำนวน",
+    "filename": "ชื่อไฟล์"
+  },
+  "help": {
+    "title": "คู่มือการใช้งาน",
+    "basicFlowTitle": "ขั้นตอนพื้นฐาน",
+    "step1": "เลือก「แผนก」และ「ประเภทสินค้า」ที่ด้านบนของหน้าจอ",
+    "step2": "กรอกข้อมูลสินค้าในฟอร์มแล้วกดปุ่ม「เพิ่มรายการ」เพื่อเพิ่มลงในรายการ",
+    "step3": "เมื่อเพิ่มสินค้าครบแล้ว กดปุ่ม「ส่งออกไฟล์」เพื่อดาวน์โหลดไฟล์ Excel",
+    "step4": "นำไฟล์ที่ส่งออกไปนำเข้าในหน้าจอ Import ของ Business Central",
+    "productTypesTitle": "เกี่ยวกับประเภทสินค้า",
+    "typeManufacturer": "ขายบาร์โค้ดผู้ผลิต ― สินค้าสั่งซื้อที่มีบาร์โค้ด",
+    "typeScale": "สินค้าขายตามน้ำหนัก ― สินค้าที่ชั่งน้ำหนักขายในร้าน (บาร์โค้ดสร้างอัตโนมัติ)",
+    "typeRawMaterial": "วัตถุดิบ ― วัตถุดิบที่ใช้ในการผลิต",
+    "typeConsumables": "วัสดุสิ้นเปลือง ― วัสดุสิ้นเปลืองที่ใช้ในการผลิต",
+    "tipsTitle": "ฟีเจอร์ที่มีประโยชน์",
+    "tipAI": "AI แนะนำ ― กรอกชื่อสินค้าแล้วกด จะแนะนำรหัสหมวดหมู่และขนาดอัตโนมัติ",
+    "tipImport": "นำเข้าไฟล์ ― อ่านไฟล์ Excel ที่มีอยู่เพื่อโหลดลงในรายการสินค้า",
+    "tipUndo": "เลิกทำ / ทำซ้ำ ― ยกเลิกหรือทำซ้ำการดำเนินการกับรายการ",
+    "tipPaste": "วางข้อมูล ― คัดลอกแถวจาก Excel แล้ววางในพื้นที่ตารางเพื่อเพิ่มหลายรายการพร้อมกัน"
   }
 }

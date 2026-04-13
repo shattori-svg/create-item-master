@@ -73,7 +73,7 @@ export function validateFormFields(fields, existingBarcodes = [], productType = 
     // 呼出番号は1回目インポート後に入力するため、初回登録時は必須にしない
     return errors;
   }
-  if (productType === 'rawMaterial') {
+  if (productType === 'rawMaterial' || productType === 'consumables') {
     // 原材料: バーコードは任意（入力時のみ検証）、販売情報は不要
     if (fields.barcode && String(fields.barcode).trim()) {
       const barcodeResult = validateBarcode(fields.barcode);
@@ -123,7 +123,7 @@ export function validateForExport(items, department, productType = 'manufacturer
   if (!items || items.length === 0) list.push('export.noItems');
   if (!department) list.push('export.noDepartment');
   items?.forEach((it, i) => {
-    // 計量器(Itemのみ)と原材料はバーコード未入力可
+    // 計量器(Itemのみ)と原材料/消耗品はバーコード未入力可
     const needBarcode = (productType === 'manufacturer') || (productType === 'scale' && requirePluForScale);
     if (needBarcode && !it.barcode) list.push(`#${i + 1} barcode`);
     const classification = it.productGroupCode || it.productGroup || '';
@@ -135,6 +135,60 @@ export function validateForExport(items, department, productType = 'manufacturer
     } else if (productType === 'manufacturer') {
       if (Number(it.salesQty) >= 2 && (!it.caseBarcode || it.casePrice == null)) list.push(`#${i + 1} case`);
     }
+    // 原材料/消耗品: 仕入先・原価は必須
+    if (productType === 'rawMaterial' || productType === 'consumables') {
+      const supplier = it.supplierCode || it.supplier || '';
+      if (!String(supplier).trim()) list.push(`#${i + 1} supplier`);
+      if (it.unitCost == null || String(it.unitCost).trim() === '') list.push(`#${i + 1} unitCost`);
+    }
   });
   return list;
+}
+
+/**
+ * Gen. Prod. Posting Group から商品区分を推定
+ */
+function inferProductTypeFromPostingGroup(genProd) {
+  if (genProd === 'MATERIAL') return 'rawMaterial';
+  if (genProd === 'SUPPLIES') return 'consumables';
+  if (genProd === 'FINISHED-INSTORE' || genProd === 'FINISHED-CK/PC') return 'scale';
+  if (genProd === 'TRADE' || genProd === 'TRADE-NON') return 'manufacturer';
+  return null;
+}
+
+/**
+ * インポート時のバリデーション: 部門・分類・商品区分の整合性チェック
+ * @returns {Array<{index: number, key: string}>} エラーリスト（空なら合格）
+ */
+export function validateImportItems(parsedItems, selectedDepartment, selectedProductType) {
+  const errors = [];
+  const deptDigit = selectedDepartment.length >= 2 ? selectedDepartment.charAt(1) : '';
+
+  for (let i = 0; i < parsedItems.length; i++) {
+    const item = parsedItems[i];
+    const num = i + 1;
+
+    // 部門コードチェック
+    if (item.departmentCode && item.departmentCode !== selectedDepartment) {
+      errors.push({ index: num, key: 'importDeptMismatch', expected: selectedDepartment, actual: item.departmentCode });
+    }
+
+    // 分類コードの1桁目が部門桁と一致するかチェック
+    if (item.productGroupCode && deptDigit) {
+      const classFirstDigit = String(item.productGroupCode).charAt(0);
+      if (classFirstDigit !== deptDigit) {
+        errors.push({ index: num, key: 'importClassMismatch', expected: deptDigit, actual: classFirstDigit });
+      }
+    }
+
+    // 商品区分チェック（Gen. Prod. Posting Group から推定）
+    const genProd = item._rawItemRow ? String(item._rawItemRow[21] || '').trim() : '';
+    if (genProd) {
+      const inferredType = inferProductTypeFromPostingGroup(genProd);
+      if (inferredType && inferredType !== selectedProductType) {
+        errors.push({ index: num, key: 'importTypeMismatch', expected: selectedProductType, actual: inferredType });
+      }
+    }
+  }
+  return errors;
 }

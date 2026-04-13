@@ -36,6 +36,9 @@ export const MANUFACTURING_LOCATION_CKPC = 'ckpc';
 export const POSTING_GROUP_INSTORE = 'FINISHED-INSTORE';
 export const POSTING_GROUP_CKPC = 'FINISHED-CK/PC';
 
+/** 消耗品: Gen. Prod. / Inventory Posting Group = SUPPLIES */
+export const POSTING_GROUP_SUPPLIES = 'SUPPLIES';
+
 /** メーカーバーコード: 食品部門(01)→TRADE、それ以外→TRADE-NON（Inventory / Gen. Prod. Posting Group） */
 export const POSTING_GROUP_TRADE = 'TRADE';
 export const POSTING_GROUP_TRADE_NON = 'TRADE-NON';

@@ -47,6 +47,19 @@ export function getSupplierMasterForDepartment(departmentCode) {
 }
 
 /**
+ * 部門＋納品先で仕入先をフィルタ（鮮魚03/惣菜05のみ3桁目で追加フィルタ）
+ * deliveryDest: 'store' → 3桁目='1', 'ckpc' → 3桁目='2'
+ */
+export function getSupplierMasterForDepartmentAndDest(departmentCode, deliveryDest) {
+  let filtered = getSupplierMasterForDepartment(departmentCode);
+  if (deliveryDest && (departmentCode === '03' || departmentCode === '05')) {
+    const destDigit = deliveryDest === 'ckpc' ? '2' : '1';
+    filtered = filtered.filter((r) => String(r.supplierNo || '').charAt(2) === destDigit);
+  }
+  return filtered;
+}
+
+/**
  * 商品名から分類を提案（キーワードとマスタの Description 一致でスコア付け）
  * 選択部門に属する分類のみ対象。
  */
@@ -91,8 +104,8 @@ export function filterGroup(query, departmentCode) {
 /** コンボで表示する仕入先の最大件数（datalist 用） */
 const SUPPLIER_DROPDOWN_LIMIT = 300;
 
-export function filterSupplier(query, departmentCode) {
-  const base = getSupplierMasterForDepartment(departmentCode);
+export function filterSupplier(query, departmentCode, deliveryDest) {
+  const base = deliveryDest ? getSupplierMasterForDepartmentAndDest(departmentCode, deliveryDest) : getSupplierMasterForDepartment(departmentCode);
   const q = (query || '').toLowerCase().trim();
   if (!q) return base.slice(0, SUPPLIER_DROPDOWN_LIMIT);
   return base.filter(

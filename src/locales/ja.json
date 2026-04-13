@@ -4,6 +4,7 @@
     "optional": "任意",
     "department": "部門",
     "productType": "商品区分",
+    "deliveryDest": "納品先",
     "pluNo": "呼出番号",
     "classification": "分類コード",
     "barcode": "バーコード",
@@ -27,14 +28,17 @@
     "casePrice": "ケース売価",
     "brandEng": "ブランド（英語）",
     "brandTha": "ブランド（タイ）",
-    "outputFilename": "ファイル名"
+    "outputFilename": "ファイル名",
+    "grossMargin": "粗利"
   },
   "option": {
     "manufacturingLocationInstore": "店舗",
     "manufacturingLocationCkpc": "CK/PC",
     "orderUnitPcs": "PCS",
     "orderUnitCtn": "CTN",
-    "orderUnitKg": "KG"
+    "orderUnitKg": "KG",
+    "deliveryDestStore": "店舗",
+    "deliveryDestCkpc": "CK/PC"
   },
   "legend": {
     "required": "必須項目",
@@ -62,28 +66,6 @@
     "price": "売価",
     "action": "操作"
   },
-  "error": {
-    "required": "入力してください",
-    "pluNoRequired": "呼出番号を入力してください",
-    "barcodeDuplicate": "このバーコードは既にリストに登録されています",
-    "barcodeInvalid": "バーコードの形式が正しくありません（GS-1）",
-    "barcodeCheckDigit": "バーコードのチェックディジットが正しくありません",
-    "nameMaxLength": "60文字以内で入力してください",
-    "numeric": "数値を入力してください",
-    "listMax": "リストは最大100件までです",
-    "departmentLocked": "リストに商品がある間は部門を変更できません。変更する場合はリストを空にしてください。",
-    "productTypeLocked": "リストに商品がある間は商品区分を変更できません。",
-    "caseRequired": "販売入数が2以上のときはケースJANコード・ケース売価を入力してください"
-  },
-  "msg": {
-    "importSuccess": "読み込みました",
-    "importReplace": "リストを置き換えますか？",
-    "importAppend": "リストに追記します",
-    "suggestByAI": "AIで推測しました",
-    "suggestByKeyword": "キーワードで推測しました",
-    "exportDone": "ファイルを出力しました",
-    "exportDoneDetail": "インポート画面で取り込んでください。"
-  },
   "btn": {
     "add": "入力完了",
     "suggest": "AI推測",
@@ -95,6 +77,104 @@
     "edit": "編集",
     "logout": "ログアウト",
     "goToImport": "インポート画面へ",
-    "close": "閉じる"
+    "close": "閉じる",
+    "save": "保存",
+    "saved": "✓ 保存済み",
+    "copy": "コピー",
+    "deleteAll": "全削除",
+    "undo": "↩ 元に戻す",
+    "redo": "↪ やり直し",
+    "processing": "処理中…"
+  },
+  "admin": {
+    "settings": "管理者設定",
+    "userManagement": "ユーザー管理",
+    "masterManagement": "マスタ管理",
+    "operationLog": "操作ログ",
+    "emailHeader": "メールアドレス",
+    "displayNameHeader": "表示名",
+    "roleHeader": "ロール",
+    "allowedDeptHeader": "許可部門",
+    "actionHeader": "操作",
+    "roleAdmin": "管理者",
+    "roleUser": "一般",
+    "loading": "読み込み中…",
+    "tabLoading": "タブを開くと読み込みます",
+    "noLogs": "ログはありません。",
+    "loadFailed": "取得失敗: ",
+    "import": "インポート",
+    "download": "ダウンロード",
+    "saveFailed": "保存に失敗しました: ",
+    "userListFailed": "ユーザー一覧の取得に失敗しました: ",
+    "selectFile": "ファイルを選択してください。",
+    "importSuccess": "✓ {n} 件インポートしました",
+    "importError": "エラー: ",
+    "selectPlaceholder": "-- 選択してください --"
+  },
+  "modal": {
+    "cancel": "キャンセル",
+    "sessionExpiredTitle": "セッションが切れました",
+    "sessionExpiredDesc": "ログインセッションが無効になりました。入力済みのデータはブラウザに保存されています。再度ログインしてから作業を続けてください。",
+    "loginPage": "ログインページへ",
+    "profileSetupTitle": "初回設定",
+    "profileSetupDesc": "ご利用の店舗と担当部門を選択してください。",
+    "store": "店舗",
+    "dept": "担当部門",
+    "selectStore": "店舗を選択してください。",
+    "selectDept": "担当部門を選択してください。",
+    "profileSaveFailed": "保存に失敗しました。再度お試しください。"
+  },
+  "error": {
+    "required": "入力してください",
+    "pluNoRequired": "呼出番号を入力してください",
+    "barcodeDuplicate": "このバーコードは既にリストに登録されています",
+    "barcodeInvalid": "バーコードの形式が正しくありません（GS-1）",
+    "barcodeCheckDigit": "バーコードのチェックディジットが正しくありません",
+    "nameMaxLength": "60文字以内で入力してください",
+    "numeric": "数値を入力してください",
+    "listMax": "リストは最大100件までです",
+    "caseRequired": "販売入数が2以上のときはケースJANコード・ケース売価を入力してください",
+    "importNoItemSheet": "有効なItemシートがありません",
+    "importReadError": "読み込みエラー: ",
+    "groupCodeNotFound": "分類コードがマスタに存在しません",
+    "importValidationFailed": "インポート検証エラー:",
+    "importDeptMismatch": "部門コードが一致しません",
+    "importClassMismatch": "分類コードの部門が一致しません",
+    "importTypeMismatch": "商品区分が一致しません"
+  },
+  "msg": {
+    "importSuccess": "読み込みました",
+    "suggestByAI": "AIで推測しました",
+    "suggestByKeyword": "キーワードで推測しました",
+    "exportDone": "ファイルを出力しました",
+    "exportDoneDetail": "インポート画面で取り込んでください。",
+    "deleteAllConfirm": "{n}件すべて削除しますか？",
+    "changeSettingConfirm": "リストの商品がクリアされます。変更しますか？",
+    "sampleDataWarning": "⚠ サンプルデータを使用中（DBに接続できません）"
+  },
+  "log": {
+    "datetime": "日時",
+    "user": "ユーザー",
+    "dept": "部門",
+    "count": "件数",
+    "filename": "ファイル名"
+  },
+  "help": {
+    "title": "使い方ガイド",
+    "basicFlowTitle": "基本の流れ",
+    "step1": "画面上部で「部門」と「商品区分」を選択します。",
+    "step2": "フォームに商品情報を入力し「入力完了」ボタンで商品リストに追加します。",
+    "step3": "必要な商品をすべて追加したら「ファイル出力」ボタンで Excel ファイルをダウンロードします。",
+    "step4": "出力したファイルを Business Central のインポート画面で取り込みます。",
+    "productTypesTitle": "商品区分について",
+    "typeManufacturer": "メーカーバーコード販売 ― バーコード付きの仕入商品",
+    "typeScale": "計量器販売商品 ― 店内で計量して販売する商品（バーコード自動生成）",
+    "typeRawMaterial": "原材料 ― 製造に使用する原材料",
+    "typeConsumables": "消耗品 ― 製造に使用する消耗品",
+    "tipsTitle": "便利な機能",
+    "tipAI": "AI推測 ― 商品名を入力後にクリックすると、分類コードや規格を自動推測します。",
+    "tipImport": "ファイルインポート ― 既存の Excel ファイルを読み込んで商品リストに反映できます。",
+    "tipUndo": "元に戻す / やり直し ― リスト操作を取り消し・再実行できます。",
+    "tipPaste": "ペースト入力 ― Excel からコピーした行をテーブル領域に貼り付けて一括追加できます。"
   }
 }

@@ -2,7 +2,7 @@
  * Excel 読み書き・Item / Additional Barcode マッピング（基本設計書 6）
  */
 import * as XLSX from 'xlsx';
-import { ITEM_FIXED, TAX_VAT07, TAX_ZERO, POSTING_GROUP_INSTORE, POSTING_GROUP_CKPC, POSTING_GROUP_TRADE, POSTING_GROUP_TRADE_NON } from '../data/constants.js';
+import { ITEM_FIXED, TAX_VAT07, TAX_ZERO, POSTING_GROUP_INSTORE, POSTING_GROUP_CKPC, POSTING_GROUP_TRADE, POSTING_GROUP_TRADE_NON, POSTING_GROUP_SUPPLIES } from '../data/constants.js';
 
 /** 計量器: 製造場所に応じて FINISHED-INSTORE / FINISHED-CK/PC */
 function getPostingGroupByLocation(manufacturingLocation) {
@@ -53,16 +53,22 @@ function itemToRow(item, departmentCode, options = {}) {
   const barcodeType = item.barcodeType
     ? String(item.barcodeType)
     : (!barcode || barcode.startsWith('20') ? 'PLU' : ITEM_FIXED.barcodeType);
+  const isRawLike = productType === 'rawMaterial' || productType === 'consumables';
   const postingGroup = productType === 'rawMaterial'
     ? 'MATERIAL'
-    : getPostingGroupByDepartment(departmentCode);
-  const inventoryType = (productType === 'rawMaterial' || departmentCode !== '01')
+    : productType === 'consumables'
+      ? POSTING_GROUP_SUPPLIES
+      : getPostingGroupByDepartment(departmentCode);
+  const inventoryPostingGroup = productType === 'consumables'
+    ? POSTING_GROUP_SUPPLIES
+    : postingGroup;
+  const inventoryType = (isRawLike || departmentCode !== '01')
     ? 'Non-Inventory'
     : ITEM_FIXED.inventoryType;
-  const baseUnitOfMeasure = productType === 'rawMaterial'
+  const baseUnitOfMeasure = isRawLike
     ? (item.orderUnit || ITEM_FIXED.baseUnitOfMeasure)
     : ITEM_FIXED.baseUnitOfMeasure;
-  const unitPrice = productType === 'rawMaterial'
+  const unitPrice = isRawLike
     ? 0
     : (item.unitPrice != null ? Number(item.unitPrice) : '');
   const values = [
@@ -82,7 +88,7 @@ function itemToRow(item, departmentCode, options = {}) {
     item.sizeTha || '',
     '',
     ITEM_FIXED.height, ITEM_FIXED.width, ITEM_FIXED.length, ITEM_FIXED.weight,
-    inventoryType, postingGroup, postingGroup, vat,
+    inventoryType, inventoryPostingGroup, postingGroup, vat,
     // "Name (CODE)" 形式が混入していた場合はコード部分のみ抽出
     (item.supplierCode ? String(item.supplierCode).replace(/^.*[（(]([^）)]+)[）)]\s*$/, '$1').trim() : ''), // 23: Vendor No. (default)
     null, // 24: Vendor Item No. (default) は上書きしない
@@ -226,6 +232,8 @@ export function buildIshidaLabelSheet(items) {
 export function buildAdditionalBarcodeSheet(items) {
   const rows = [];
   for (const item of items) {
+    const orderQty = Number(item.orderQty) || 1;
+    if (orderQty <= 1) continue;
     rows.push(...itemToAdditionalRows(item));
   }
   return [ADDITIONAL_HEADERS, ...rows];

@@ -69,18 +69,22 @@ html, body { height: 100%; overflow: hidden; }
 .lang-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
 
 .department-row,
-.product-type-row {
+.product-type-row,
+.delivery-dest-row {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   flex-shrink: 0;
 }
+.delivery-dest-row[hidden] { display: none; }
 .department-row .warn-msg,
 .product-type-row .warn-msg { margin-left: 0.25rem; }
 .department-row label,
-.product-type-row label { font-weight: 600; min-width: 3em; }
+.product-type-row label,
+.delivery-dest-row label { font-weight: 600; min-width: 3em; }
 .department-row select,
-.product-type-row select {
+.product-type-row select,
+.delivery-dest-row select {
   padding: 0.4rem 0.6rem;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -93,6 +97,14 @@ input.readonly, input[readonly] {
   background: #eee;
   color: #555;
   cursor: default;
+}
+.item-form .form-group--required input.readonly,
+.item-form .form-group--required input[readonly],
+.item-form .form-group--required input.readonly.input-required--filled,
+.item-form .form-group--required input[readonly].input-required--filled {
+  background: #eee !important;
+  border-color: #ccc !important;
+  color: #555;
 }
 
 /* 商品区分: 計量器のとき取引・販売ブロック非表示、メーカー時は計量器情報非表示はHTMLのhiddenで制御 */
@@ -218,6 +230,13 @@ input.readonly, input[readonly] {
   color: var(--error);
   min-height: 1em;
 }
+.gross-margin {
+  display: block;
+  font-size: 11px;
+  color: #555;
+  min-height: 1em;
+}
+.gross-margin--negative { color: var(--error); }
 .suggest-source-msg {
   display: block;
   margin-top: 0.2rem;
@@ -489,7 +508,7 @@ input.readonly, input[readonly] {
   margin-bottom: -2px;
 }
 .admin-tab--active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
-.admin-tab-panel { min-height: 120px; }
+.admin-tab-panel { min-height: 120px; overflow: auto; flex: 1; }
 
 /* マスタインポート */
 .master-import-section { display: flex; flex-direction: column; gap: 1.25rem; }
@@ -650,3 +669,55 @@ input.readonly, input[readonly] {
 .admin-logs-table th { background: var(--step-bg); font-weight: 600; }
 .admin-logs-error { color: var(--error); }
 .numpad-clear { grid-column: span 2; width: auto; background: #f5f5f5; }
+
+/* 使い方ガイド FAB */
+.help-fab {
+  position: fixed;
+  bottom: 1.25rem;
+  right: 1.25rem;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: none;
+  background: var(--primary);
+  color: #fff;
+  font-size: 22px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.help-fab:hover { background: var(--primary-hover); }
+
+/* 使い方ガイドモーダル */
+.modal-content--help {
+  max-width: 560px;
+  width: 92%;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+.help-body {
+  overflow-y: auto;
+  flex: 1;
+  margin-bottom: 1rem;
+  font-size: 13.5px;
+  line-height: 1.7;
+}
+.help-section { margin-bottom: 1rem; }
+.help-section:last-child { margin-bottom: 0; }
+.help-section h4 {
+  font-size: 14px;
+  font-weight: 700;
+  margin: 0 0 0.4rem;
+  color: var(--primary);
+}
+.help-section ol,
+.help-section ul {
+  margin: 0;
+  padding-left: 1.4rem;
+}
+.help-section li { margin-bottom: 0.25rem; }

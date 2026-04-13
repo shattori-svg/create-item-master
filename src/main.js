@@ -4,12 +4,12 @@
  */
 import { initI18n, setLanguage, t, getLang } from './lib/i18n.js';
 import { DEPARTMENTS } from './data/departments.js';
-import { PRODUCT_TYPES, PRODUCT_TYPE_MANUFACTURER, PRODUCT_TYPE_SCALE, PRODUCT_TYPE_RAW_MATERIAL } from './data/productType.js';
+import { PRODUCT_TYPES, PRODUCT_TYPE_MANUFACTURER, PRODUCT_TYPE_SCALE, PRODUCT_TYPE_RAW_MATERIAL, PRODUCT_TYPE_CONSUMABLES } from './data/productType.js';
 import { MAX_ITEMS, DEFAULT_SPEC_ENG, DEFAULT_SALES_QTY, DEFAULT_TAX_RATE, DEFAULT_LEAD_TIME, IMPORT_PAGE_URL } from './data/constants.js';
-import { setGroupMaster, setSupplierMaster, getGroupMasterForDepartment, getSupplierMasterForDepartment, filterGroup, filterSupplier, suggestGroupByProductName } from './data/masters.js';
+import { setGroupMaster, setSupplierMaster, getGroupMasterForDepartment, getSupplierMasterForDepartment, getSupplierMasterForDepartmentAndDest, filterGroup, filterSupplier, suggestGroupByProductName } from './data/masters.js';
 import { suggestClassificationWithGenAI, hasGenAIConfig } from './lib/genaiSuggest.js';
 import { fetchMastersFromApi, clearMastersCache } from './lib/mastersApi.js';
-import { validateFormFields, validateForExport } from './lib/validation.js';
+import { validateFormFields, validateForExport, validateImportItems } from './lib/validation.js';
 import { exportXlsx, parseItemSheet } from './lib/excel.js';
 
 // --- State ---
@@ -17,7 +17,14 @@ let items = [];
 let selectedDepartment = '01';
 let selectedProductType = PRODUCT_TYPE_MANUFACTURER;
 let editingIndex = -1;
+let selectedDeliveryDestination = 'store';
+const DELIVERY_DEST_DEPARTMENTS = ['03', '05'];
 let currentAuthStatus = null;
+
+/** 原材料または消耗品かどうか（UI・バリデーションは共通） */
+function isRawMaterialLike(pt) {
+  return pt === PRODUCT_TYPE_RAW_MATERIAL || pt === PRODUCT_TYPE_CONSUMABLES;
+}
 
 // --- Undo/Redo ---
 const MAX_HISTORY = 30;
@@ -56,8 +63,6 @@ function redo() {
   updateHistoryButtons();
 }
 
-// インポートモード用一時保存
-let pendingImportItems = null;
 
 // --- DOM ---
 const el = {
@@ -65,6 +70,8 @@ const el = {
   departmentWarn: document.getElementById('department-warn'),
   productType: document.getElementById('productType'),
   productTypeWarn: document.getElementById('product-type-warn'),
+  deliveryDestRow: document.getElementById('delivery-dest-row'),
+  deliveryDest: document.getElementById('deliveryDest'),
   authUser: document.getElementById('auth-user'),
   btnLogout: document.getElementById('btn-logout'),
   form: document.getElementById('item-form'),
@@ -86,6 +93,7 @@ const el = {
   orderUnit: document.getElementById('orderUnit'),
   leadTime: document.getElementById('leadTime'),
   unitPrice: document.getElementById('unitPrice'),
+  grossMargin: document.getElementById('grossMargin'),
   salesQty: document.getElementById('salesQty'),
   caseFields: document.getElementById('case-fields'),
   caseBarcode: document.getElementById('caseBarcode'),
@@ -133,11 +141,6 @@ const el = {
   adminLogsContent: document.getElementById('admin-logs-content'),
   btnUndo: document.getElementById('btn-undo'),
   btnRedo: document.getElementById('btn-redo'),
-  importModeModal: document.getElementById('import-mode-modal'),
-  importModeDesc: document.getElementById('import-mode-desc'),
-  btnImportReplace: document.getElementById('btn-import-replace'),
-  btnImportMerge: document.getElementById('btn-import-merge'),
-  btnCancelImportMode: document.getElementById('btn-cancel-import-mode'),
   sessionExpiredModal: document.getElementById('session-expired-modal'),
   btnSessionReload: document.getElementById('btn-session-reload'),
   inputGroupFile: document.getElementById('input-group-file'),
@@ -150,6 +153,9 @@ const el = {
   suggestSourceMsg: document.getElementById('suggest-source-msg'),
   numpad: document.getElementById('numpad'),
   tableOrderCol: document.getElementById('table-order-col'),
+  btnHelp: document.getElementById('btn-help'),
+  helpModal: document.getElementById('help-modal'),
+  btnCloseHelp: document.getElementById('btn-close-help'),
 };
 
 const errorIds = {
@@ -191,8 +197,8 @@ async function init() {
     if (pt) opt.textContent = lang === 'ja' ? (pt.nameJa ?? pt.nameTh) : (pt.nameTh ?? pt.nameJa);
   });
 }
-  document.getElementById('btn-lang-ja').addEventListener('click', () => { setLanguage('ja'); refreshDepartmentOptions(); refreshProductTypeOptions(); applyProductTypeVisibility(); document.querySelectorAll('.lang-btn').forEach((b) => b.classList.remove('active')); document.getElementById('btn-lang-ja').classList.add('active'); });
-  document.getElementById('btn-lang-th').addEventListener('click', () => { setLanguage('th'); refreshDepartmentOptions(); refreshProductTypeOptions(); applyProductTypeVisibility(); document.querySelectorAll('.lang-btn').forEach((b) => b.classList.remove('active')); document.getElementById('btn-lang-th').classList.add('active'); });
+  document.getElementById('btn-lang-ja').addEventListener('click', () => { setLanguage('ja'); refreshDepartmentOptions(); refreshProductTypeOptions(); applyProductTypeVisibility(); renderTable(); updateGrossMargin(); document.querySelectorAll('.lang-btn').forEach((b) => b.classList.remove('active')); document.getElementById('btn-lang-ja').classList.add('active'); });
+  document.getElementById('btn-lang-th').addEventListener('click', () => { setLanguage('th'); refreshDepartmentOptions(); refreshProductTypeOptions(); applyProductTypeVisibility(); renderTable(); updateGrossMargin(); document.querySelectorAll('.lang-btn').forEach((b) => b.classList.remove('active')); document.getElementById('btn-lang-th').classList.add('active'); });
 
   fillDepartmentSelect();
   await loadMastersFromApi();
@@ -204,12 +210,15 @@ async function init() {
   bindForm();
   bindFocusSelectAll();
   bindRequiredFeedback();
+  bindGrossMargin();
   bindClearButton();
   bindSalesQtyToggle();
   bindComboProductGroup();
   bindComboSupplier();
   bindDepartmentChange();
   bindProductTypeChange();
+  updateDeliveryDestVisibility();
+  bindDeliveryDestChange();
   bindTable();
   bindOutput();
   bindNumpad();
@@ -294,6 +303,14 @@ function bindAuth() {
       if (target === 'logs') fetchAdminLogs();
     });
   });
+  // 使い方ガイド
+  if (el.btnHelp && el.helpModal) {
+    el.btnHelp.addEventListener('click', () => { el.helpModal.hidden = false; });
+    el.btnCloseHelp.addEventListener('click', () => { el.helpModal.hidden = true; });
+    el.helpModal.addEventListener('click', (e) => {
+      if (e.target === el.helpModal) el.helpModal.hidden = true;
+    });
+  }
   // マスタインポートボタン
   if (el.btnGroupImport) {
     el.btnGroupImport.addEventListener('click', () => importMasterFile('groups'));
@@ -308,27 +325,6 @@ function bindAuth() {
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'z') { e.preventDefault(); undo(); }
     if ((e.ctrlKey || e.metaKey) && ((e.shiftKey && e.key === 'z') || e.key === 'y')) { e.preventDefault(); redo(); }
   });
-  // インポートモードモーダル
-  if (el.btnImportReplace) {
-    el.btnImportReplace.addEventListener('click', () => {
-      if (pendingImportItems) applyImportReplace(pendingImportItems);
-      pendingImportItems = null;
-      if (el.importModeModal) el.importModeModal.hidden = true;
-    });
-  }
-  if (el.btnImportMerge) {
-    el.btnImportMerge.addEventListener('click', () => {
-      if (pendingImportItems) applyImportMerge(pendingImportItems);
-      pendingImportItems = null;
-      if (el.importModeModal) el.importModeModal.hidden = true;
-    });
-  }
-  if (el.btnCancelImportMode) {
-    el.btnCancelImportMode.addEventListener('click', () => {
-      pendingImportItems = null;
-      if (el.importModeModal) el.importModeModal.hidden = true;
-    });
-  }
   // セッション切れモーダル
   if (el.btnSessionReload) {
     el.btnSessionReload.addEventListener('click', () => {
@@ -345,14 +341,14 @@ async function openAdminModal() {
   if (!el.adminModal) return;
   el.adminModal.hidden = false;
   el.adminError.hidden = true;
-  el.adminUserTbody.innerHTML = '<tr><td colspan="5" style="text-align:center">読み込み中…</td></tr>';
+  el.adminUserTbody.innerHTML = `<tr><td colspan="5" style="text-align:center">${t('admin.loading')}</td></tr>`;
   try {
     const res = await fetch('/api/admin/users', { credentials: 'include' });
     if (!res.ok) throw new Error(`${res.status}`);
     const users = await res.json();
     renderAdminUserTable(users);
   } catch (err) {
-    el.adminError.textContent = 'ユーザー一覧の取得に失敗しました: ' + err.message;
+    el.adminError.textContent = t('admin.userListFailed') + err.message;
     el.adminError.hidden = false;
     el.adminUserTbody.innerHTML = '';
   }
@@ -360,7 +356,7 @@ async function openAdminModal() {
 
 function renderAdminUserTable(users) {
   const DEPT_CODES = ['01', '02', '03', '04', '05', '06'];
-  const DEPT_NAMES = { '01': '食品', '02': '青果', '03': '鮮魚', '04': '精肉', '05': '総菜', '06': '店舗管理' };
+  const lang = getLang();
 
   el.adminUserTbody.innerHTML = '';
   users.forEach((user) => {
@@ -385,7 +381,7 @@ function renderAdminUserTable(users) {
     ['admin', 'user'].forEach((r) => {
       const opt = document.createElement('option');
       opt.value = r;
-      opt.textContent = r === 'admin' ? '管理者' : '一般';
+      opt.textContent = r === 'admin' ? t('admin.roleAdmin') : t('admin.roleUser');
       opt.selected = user.role === r;
       roleSelect.appendChild(opt);
     });
@@ -406,7 +402,9 @@ function renderAdminUserTable(users) {
       cb.dataset.field = 'dept';
       cb.checked = Array.isArray(user.allowed_departments) && user.allowed_departments.includes(code);
       label.appendChild(cb);
-      label.appendChild(document.createTextNode(DEPT_NAMES[code] || code));
+      const dept = DEPARTMENTS.find((d) => d.code === code);
+      const deptName = dept ? (lang === 'ja' ? (dept.nameJa ?? dept.nameTh) : (dept.nameTh ?? dept.nameJa)) : code;
+      label.appendChild(document.createTextNode(deptName));
       deptWrap.appendChild(label);
     });
     tdDepts.appendChild(deptWrap);
@@ -416,7 +414,7 @@ function renderAdminUserTable(users) {
     const tdActions = document.createElement('td');
     const btnSave = document.createElement('button');
     btnSave.type = 'button';
-    btnSave.textContent = '保存';
+    btnSave.textContent = t('btn.save');
     btnSave.className = 'btn-admin-save';
     btnSave.addEventListener('click', () => saveUserAdmin(tr, user.id));
     tdActions.appendChild(btnSave);
@@ -446,36 +444,37 @@ async function saveUserAdmin(tr, userId) {
     }
     const saveBtn = tr.querySelector('.btn-admin-save');
     if (saveBtn) {
-      saveBtn.textContent = '✓ 保存済み';
-      setTimeout(() => { saveBtn.textContent = '保存'; }, 1500);
+      saveBtn.textContent = t('btn.saved');
+      setTimeout(() => { saveBtn.textContent = t('btn.save'); }, 1500);
     }
   } catch (err) {
-    alert('保存に失敗しました: ' + err.message);
+    alert(t('admin.saveFailed') + err.message);
   }
 }
 
 async function fetchAdminLogs() {
   if (!el.adminLogsContent) return;
-  el.adminLogsContent.innerHTML = '<p>読み込み中…</p>';
+  el.adminLogsContent.innerHTML = `<p>${t('admin.loading')}</p>`;
   try {
     const res = await fetch('/api/admin/logs', { credentials: 'include' });
     if (!res.ok) throw new Error(`${res.status}`);
     const logs = await res.json();
     if (logs.length === 0) {
-      el.adminLogsContent.innerHTML = '<p>ログはありません。</p>';
+      el.adminLogsContent.innerHTML = `<p>${t('admin.noLogs')}</p>`;
       return;
     }
+    const locale = getLang() === 'ja' ? 'ja-JP' : 'th-TH';
     const rows = logs.map((log) => {
-      const date = new Date(log.created_at).toLocaleString('ja-JP');
+      const date = new Date(log.created_at).toLocaleString(locale);
       const user = escapeHtml(log.user_display_name || log.username || '—');
       const dept = escapeHtml(log.dept || '—');
       const count = log.item_count ?? '—';
       const filename = escapeHtml(log.filename || '—');
       return `<tr><td>${date}</td><td>${user}</td><td>${dept}</td><td>${count}</td><td>${filename}</td></tr>`;
     }).join('');
-    el.adminLogsContent.innerHTML = `<table class="admin-logs-table"><thead><tr><th>日時</th><th>ユーザー</th><th>部門</th><th>件数</th><th>ファイル名</th></tr></thead><tbody>${rows}</tbody></table>`;
+    el.adminLogsContent.innerHTML = `<table class="admin-logs-table"><thead><tr><th>${t('log.datetime')}</th><th>${t('log.user')}</th><th>${t('log.dept')}</th><th>${t('log.count')}</th><th>${t('log.filename')}</th></tr></thead><tbody>${rows}</tbody></table>`;
   } catch (err) {
-    el.adminLogsContent.innerHTML = `<p class="admin-logs-error">取得失敗: ${escapeHtml(err.message)}</p>`;
+    el.adminLogsContent.innerHTML = `<p class="admin-logs-error">${t('admin.loadFailed')}${escapeHtml(err.message)}</p>`;
   }
 }
 
@@ -486,7 +485,7 @@ async function importMasterFile(type) {
   const btn = isGroup ? el.btnGroupImport : el.btnSupplierImport;
 
   if (!fileInput || !fileInput.files.length) {
-    alert('ファイルを選択してください。');
+    alert(t('admin.selectFile'));
     return;
   }
   const file = fileInput.files[0];
@@ -494,7 +493,7 @@ async function importMasterFile(type) {
   formData.append('file', file);
 
   btn.disabled = true;
-  btn.textContent = '処理中…';
+  btn.textContent = t('btn.processing');
   if (statusEl) { statusEl.hidden = true; statusEl.className = 'master-import-status'; }
 
   try {
@@ -506,7 +505,7 @@ async function importMasterFile(type) {
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || res.status);
     if (statusEl) {
-      statusEl.textContent = `✓ ${body.count} 件インポートしました`;
+      statusEl.textContent = t('admin.importSuccess').replace('{n}', body.count);
       statusEl.className = 'master-import-status master-import-status--ok';
       statusEl.hidden = false;
     }
@@ -516,13 +515,13 @@ async function importMasterFile(type) {
     await loadMastersFromApi();
   } catch (err) {
     if (statusEl) {
-      statusEl.textContent = 'エラー: ' + err.message;
+      statusEl.textContent = t('admin.importError') + err.message;
       statusEl.className = 'master-import-status master-import-status--err';
       statusEl.hidden = false;
     }
   } finally {
     btn.disabled = false;
-    btn.textContent = 'インポート';
+    btn.textContent = t('admin.import');
   }
 }
 
@@ -539,7 +538,7 @@ async function loadStoreMaster() {
 function setupInitialProfile(status) {
   return new Promise(async (resolve) => {
     // 店舗ドロップダウンを構築
-    el.profileStore.innerHTML = '<option value="">-- 選択してください --</option>';
+    el.profileStore.innerHTML = `<option value="">${t('admin.selectPlaceholder')}</option>`;
     const stores = await loadStoreMaster();
     if (stores.length === 0) {
       // マスタが未登録の場合はテキスト入力にフォールバック
@@ -562,11 +561,13 @@ function setupInitialProfile(status) {
     }
 
     // 部門ドロップダウンを構築（許可部門のみ）
-    el.profileDept.innerHTML = '<option value="">-- 選択してください --</option>';
+    el.profileDept.innerHTML = `<option value="">${t('admin.selectPlaceholder')}</option>`;
+    const profileLang = getLang();
     getAllowedDepartments().forEach((d) => {
       const opt = document.createElement('option');
       opt.value = d.code;
-      opt.textContent = `${d.code} ${d.nameJa}`;
+      const deptName = profileLang === 'ja' ? (d.nameJa ?? d.nameTh) : (d.nameTh ?? d.nameJa);
+      opt.textContent = `${d.code} ${deptName}`;
       if (d.code === (status.preferredDepartment || '')) opt.selected = true;
       el.profileDept.appendChild(opt);
     });
@@ -579,12 +580,12 @@ function setupInitialProfile(status) {
       const preferredStore = el.profileStore.value.trim ? el.profileStore.value.trim() : el.profileStore.value;
       const preferredDepartment = el.profileDept.value;
       if (!preferredStore) {
-        el.profileError.textContent = '店舗を選択してください。';
+        el.profileError.textContent = t('modal.selectStore');
         el.profileError.hidden = false;
         return;
       }
       if (!preferredDepartment) {
-        el.profileError.textContent = '担当部門を選択してください。';
+        el.profileError.textContent = t('modal.selectDept');
         el.profileError.hidden = false;
         return;
       }
@@ -605,7 +606,7 @@ function setupInitialProfile(status) {
         el.profileSetupModal.hidden = true;
         resolve();
       } catch {
-        el.profileError.textContent = '保存に失敗しました。再度お試しください。';
+        el.profileError.textContent = t('modal.profileSaveFailed');
         el.profileError.hidden = false;
       } finally {
         el.btnProfileSave.disabled = false;
@@ -659,10 +660,12 @@ function applyProductTypeVisibility() {
   const app = document.getElementById('app');
   const isScale = selectedProductType === PRODUCT_TYPE_SCALE;
   const isRawMaterial = selectedProductType === PRODUCT_TYPE_RAW_MATERIAL;
+  const isConsumables = selectedProductType === PRODUCT_TYPE_CONSUMABLES;
+  const isRawLike = isRawMaterial || isConsumables;
   const isManufacturer = selectedProductType === PRODUCT_TYPE_MANUFACTURER;
   app.classList.toggle('product-type-scale', isScale);
   app.classList.toggle('product-type-manufacturer', isManufacturer);
-  app.classList.toggle('product-type-raw-material', isRawMaterial);
+  app.classList.toggle('product-type-raw-material', isRawLike);
 
   document.querySelectorAll('[data-block]').forEach((node) => {
     const block = node.getAttribute('data-block');
@@ -670,17 +673,17 @@ function applyProductTypeVisibility() {
     if (block === 'manufacturer-sales') node.hidden = !isManufacturer;
     if (block === 'scale') node.hidden = !isScale;
     if (block === 'trade') node.hidden = isScale;
-    if (block === 'rawMaterial') node.hidden = !isRawMaterial;
+    if (block === 'rawMaterial') node.hidden = !isRawLike;
   });
 
   if (el.barcode) {
     el.barcode.readOnly = isScale;
     el.barcode.classList.toggle('readonly', isScale);
   }
-  if (el.outSecondWrap) el.outSecondWrap.hidden = isRawMaterial;
-  if (isRawMaterial && el.outSecond) el.outSecond.checked = false;
+  if (el.outSecondWrap) el.outSecondWrap.hidden = isRawLike;
+  if (isRawLike && el.outSecond) el.outSecond.checked = false;
   if (el.tableOrderCol) {
-    el.tableOrderCol.textContent = isRawMaterial ? t('table.orderUnit') : t('table.orderQty');
+    el.tableOrderCol.textContent = isRawLike ? t('table.orderUnit') : t('table.orderQty');
   }
   if (el.outSecondLabel) el.outSecondLabel.textContent = isScale ? 'Ishida Label' : 'Additional Barcode';
   updateRequiredFeedback();
@@ -850,7 +853,7 @@ function extractCodeFromDisplay(val) {
 }
 
 function formDataToItem(f) {
-  const isRawMaterial = selectedProductType === PRODUCT_TYPE_RAW_MATERIAL;
+  const isRawMaterial = isRawMaterialLike(selectedProductType);
   const barcode = f.barcode != null ? String(f.barcode).trim() : '';
   // supplierCode が "Name (CODE)" 形式の場合はコード部分だけ取り出す
   const rawSupplierCode = f.supplierCode || f.supplier || '';
@@ -903,6 +906,7 @@ function resetForm(preserveSupplier = false) {
   toggleCaseFields(Number(el.salesQty.value) >= 2);
   applyProductTypeVisibility();
   updateRequiredFeedback();
+  updateGrossMargin();
   renderTable(); // 編集行のハイライトを外す
 }
 
@@ -935,7 +939,7 @@ function applyFieldErrors(errors) {
 /** 必須項目の入力状態に応じて枠線色・ボタン有効化を更新 */
 function updateRequiredFeedback() {
   const isScale = selectedProductType === PRODUCT_TYPE_SCALE;
-  const isRawMaterial = selectedProductType === PRODUCT_TYPE_RAW_MATERIAL;
+  const isRawMaterial = isRawMaterialLike(selectedProductType);
   const caseVisible = !isScale && !isRawMaterial && !el.caseFields.hidden;
   if (isScale) {
     // 呼出番号は1回目インポート後入力のため、必須表示はしない
@@ -1005,7 +1009,7 @@ function updateRequiredFeedback() {
 
 function allRequiredFilled() {
   const isScale = selectedProductType === PRODUCT_TYPE_SCALE;
-  const isRawMaterial = selectedProductType === PRODUCT_TYPE_RAW_MATERIAL;
+  const isRawMaterial = isRawMaterialLike(selectedProductType);
   if (isScale) {
     // 呼出番号は1回目インポート後に入力するため、初回登録時は必須にしない
     if (String(el.nameEng?.value || '').trim() === '') return false;
@@ -1043,6 +1047,23 @@ function bindRequiredFeedback() {
   el.form.addEventListener('input', updateRequiredFeedback);
   el.form.addEventListener('change', updateRequiredFeedback);
   el.form.addEventListener('focusout', updateRequiredFeedback);
+}
+
+function updateGrossMargin() {
+  const cost = parseFloat(cleanNumeric(el.unitCost.value));
+  const price = parseFloat(cleanNumeric(el.unitPrice.value));
+  if (!isFinite(cost) || !isFinite(price) || price === 0) {
+    el.grossMargin.textContent = '';
+    return;
+  }
+  const margin = ((price - cost) / price * 100).toFixed(1);
+  el.grossMargin.textContent = `${t('label.grossMargin')} ${margin}%`;
+  el.grossMargin.classList.toggle('gross-margin--negative', Number(margin) < 0);
+}
+
+function bindGrossMargin() {
+  el.unitCost.addEventListener('input', updateGrossMargin);
+  el.unitPrice.addEventListener('input', updateGrossMargin);
 }
 
 function bindSalesQtyToggle() {
@@ -1183,11 +1204,11 @@ function bindComboProductGroup() {
 
 function bindComboSupplier() {
   function refreshOptions(q) {
-    const filtered = filterSupplier(q, selectedDepartment);
+    const filtered = filterSupplier(q, selectedDepartment, selectedDeliveryDestination);
     el.supplierList.innerHTML = filtered.map((r) => `<option value="${escapeHtml(r.supplierNo)}">${escapeHtml((r.abbreviation || r.nameEng || '') + ' (' + r.supplierNo + ')')}</option>`).join('');
   }
   function findSupplierMatch(q) {
-    const filtered = filterSupplier(q, selectedDepartment);
+    const filtered = filterSupplier(q, selectedDepartment, selectedDeliveryDestination);
     let match = filtered.find((r) => String(r.supplierNo) === q);
     if (!match && /\([\d]+\)$/.test(q)) {
       const code = q.replace(/^.*\(([\d]+)\)$/, '$1');
@@ -1217,19 +1238,59 @@ function bindComboSupplier() {
   });
 }
 
+/** リストにアイテムがある場合、確認ダイアログを表示してクリアする。trueなら続行可能 */
+function confirmAndClearList() {
+  if (items.length === 0) return true;
+  if (!confirm(t('msg.changeSettingConfirm'))) return false;
+  items = [];
+  undoStack = [];
+  redoStack = [];
+  editingIndex = -1;
+  resetForm();
+  clearFieldErrors();
+  updateHistoryButtons();
+  return true;
+}
+
 function bindDepartmentChange() {
   el.department.addEventListener('change', async () => {
-    if (items.length > 0) {
-      el.departmentWarn.textContent = t('error.departmentLocked');
+    if (!confirmAndClearList()) {
       el.department.value = selectedDepartment;
       return;
     }
     el.departmentWarn.textContent = '';
     selectedDepartment = el.department.value;
+    updateDeliveryDestVisibility();
     clearComboSelectionsIfInvalid();
     await loadMastersFromApi(selectedDepartment);
     refreshClassificationCombo();
     refreshSupplierCombo();
+    renderTable();
+    updateExportButtonState();
+  });
+}
+
+/** 納品先セレクターの表示/非表示を切り替え（鮮魚03/惣菜05のみ表示） */
+function updateDeliveryDestVisibility() {
+  const show = DELIVERY_DEST_DEPARTMENTS.includes(selectedDepartment);
+  if (el.deliveryDestRow) el.deliveryDestRow.hidden = !show;
+  if (!show) {
+    selectedDeliveryDestination = 'store';
+    if (el.deliveryDest) el.deliveryDest.value = 'store';
+  }
+}
+
+function bindDeliveryDestChange() {
+  if (!el.deliveryDest) return;
+  el.deliveryDest.addEventListener('change', () => {
+    if (!confirmAndClearList()) {
+      el.deliveryDest.value = selectedDeliveryDestination;
+      return;
+    }
+    selectedDeliveryDestination = el.deliveryDest.value;
+    clearComboSelectionsIfInvalid();
+    refreshSupplierCombo();
+    renderTable();
     updateExportButtonState();
   });
 }
@@ -1237,8 +1298,7 @@ function bindDepartmentChange() {
 function bindProductTypeChange() {
   if (!el.productType) return;
   el.productType.addEventListener('change', () => {
-    if (items.length > 0) {
-      el.productTypeWarn.textContent = t('error.productTypeLocked');
+    if (!confirmAndClearList()) {
       el.productType.value = selectedProductType;
       return;
     }
@@ -1253,7 +1313,7 @@ function bindProductTypeChange() {
 /** 部門変更後: 現在の分類・仕入先が選択部門に属さない場合はクリア */
 function clearComboSelectionsIfInvalid() {
   const groups = getGroupMasterForDepartment(selectedDepartment);
-  const suppliers = getSupplierMasterForDepartment(selectedDepartment);
+  const suppliers = getSupplierMasterForDepartmentAndDest(selectedDepartment, selectedDeliveryDestination);
   const currentCode = el.productGroupCode.value.trim();
   const currentSupplier = el.supplierCode.value.trim();
   if (currentCode && !groups.some((r) => String(r.productGroupCode) === currentCode)) {
@@ -1291,7 +1351,7 @@ function refreshClassificationCombo() {
 }
 
 function refreshSupplierCombo() {
-  const filtered = filterSupplier(el.supplier.value, selectedDepartment);
+  const filtered = filterSupplier(el.supplier.value, selectedDepartment, selectedDeliveryDestination);
   el.supplierList.innerHTML = filtered.map((r) => `<option value="${escapeHtml(r.supplierNo)}">${escapeHtml((r.abbreviation || r.nameEng || '') + ' (' + r.supplierNo + ')')}</option>`).join('');
 }
 
@@ -1336,7 +1396,11 @@ function pasteItemsFromText(text) {
     // supplier / productGroup の同期
     item.supplier = item.supplierCode;
     item.productGroup = item.productGroupCode;
-    if (!item.barcode) continue;
+    // メーカーバーコード商品のみバーコード必須、原材料/消耗品/計量器は任意
+    const needBarcode = selectedProductType === PRODUCT_TYPE_MANUFACTURER;
+    if (needBarcode && !item.barcode) continue;
+    // 最低限の識別データ（バーコードまたは商品名）が必要
+    if (!item.barcode && !item.nameEng) continue;
     added.push(item);
   }
   if (added.length === 0) return;
@@ -1368,7 +1432,7 @@ function bindTable() {
   if (el.btnDeleteAll) {
     el.btnDeleteAll.addEventListener('click', () => {
       if (items.length === 0) return;
-      if (!confirm(`${items.length}件すべて削除しますか？`)) return;
+      if (!confirm(t('msg.deleteAllConfirm').replace('{n}', items.length))) return;
       saveToHistory();
       items = [];
       editingIndex = -1;
@@ -1401,7 +1465,7 @@ const GRID_COL_FIELDS = [
 ];
 
 function renderTable() {
-  const isRawMaterial = selectedProductType === PRODUCT_TYPE_RAW_MATERIAL;
+  const isRawMaterial = isRawMaterialLike(selectedProductType);
   el.tbody.innerHTML = '';
   items.forEach((item, i) => {
     const tr = document.createElement('tr');
@@ -1418,7 +1482,7 @@ function renderTable() {
     tdDel.className = 'col-del-btn';
     const btnRowDel = document.createElement('button');
     btnRowDel.type = 'button';
-    btnRowDel.textContent = '削除';
+    btnRowDel.textContent = t('btn.delete');
     btnRowDel.className = 'btn-row-delete';
     btnRowDel.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1447,7 +1511,7 @@ function renderTable() {
       { cls: 'cell-barcode', val: item.barcode || '' },
       { cls: 'cell-name', val: item.nameEng || '', truncate: 50 },
       { cls: 'cell-name', val: item.nameTha || '', truncate: 50 },
-      { cls: groupCodeValid ? '' : 'cell-invalid', val: groupLabel, title: groupCodeValid ? '' : '分類コードがマスタに存在しません', truncate: 40 },
+      { cls: groupCodeValid ? '' : 'cell-invalid', val: groupLabel, title: groupCodeValid ? '' : t('error.groupCodeNotFound'), truncate: 40 },
       { cls: 'col-plu', val: item.pluNo != null ? String(item.pluNo) : '' },
       { cls: 'col-supplier cell-name', val: (item.supplier || item.supplierCode || ''), truncate: 30 },
       { cls: 'col-orderQty', val: String(isRawMaterial ? (item.orderUnit || '') : (item.orderQty != null ? item.orderQty : '')) },
@@ -1472,7 +1536,7 @@ function renderTable() {
     tdAction.className = 'col-action';
     const btnCopy = document.createElement('button');
     btnCopy.type = 'button';
-    btnCopy.textContent = 'コピー';
+    btnCopy.textContent = t('btn.copy');
     btnCopy.className = 'btn-row-copy';
     btnCopy.addEventListener('click', () => copyRow(i));
     tdAction.appendChild(btnCopy);
@@ -1609,30 +1673,29 @@ function copyRow(i) {
   el.barcode.focus();
 }
 
+function formatImportErrors(errors) {
+  const prefix = t('error.importValidationFailed');
+  const details = errors.map((e) => {
+    if (e.key === 'importDeptMismatch') return `#${e.index}: ${t('error.importDeptMismatch')} (${e.expected} != ${e.actual})`;
+    if (e.key === 'importClassMismatch') return `#${e.index}: ${t('error.importClassMismatch')}`;
+    if (e.key === 'importTypeMismatch') return `#${e.index}: ${t('error.importTypeMismatch')}`;
+    return `#${e.index}: ${e.key}`;
+  });
+  return prefix + ' ' + details.join('; ');
+}
+
 function applyImportReplace(parsed) {
   saveToHistory();
   items = parsed.slice();
   editingIndex = -1;
   el.btnAdd.textContent = t('btn.add');
+  resetForm();
+  clearFieldErrors();
   renderTable();
   el.exportErrors.hidden = true;
   updateHistoryButtons();
 }
 
-function applyImportMerge(parsed) {
-  saveToHistory();
-  const barcodeMap = new Map(items.map((item, idx) => [item.barcode, idx]));
-  for (const imported of parsed) {
-    if (imported.barcode && barcodeMap.has(imported.barcode)) {
-      items[barcodeMap.get(imported.barcode)] = { ...items[barcodeMap.get(imported.barcode)], ...imported };
-    } else {
-      if (items.length < MAX_ITEMS) items.push(imported);
-    }
-  }
-  renderTable();
-  el.exportErrors.hidden = true;
-  updateHistoryButtons();
-}
 
 async function logExportToServer(dept, exportItems, filename) {
   try {
@@ -1704,6 +1767,7 @@ function fillForm(item) {
   toggleCaseFields(Number(el.salesQty.value) >= 2);
   applyProductTypeVisibility();
   updateRequiredFeedback();
+  updateGrossMargin();
 }
 
 function showListMaxWarn() {
@@ -1727,7 +1791,7 @@ function bindOutput() {
   if (el.outSecond) el.outSecond.addEventListener('change', updateExportButtonState);
   el.btnExport.addEventListener('click', () => {
     const isScale = selectedProductType === PRODUCT_TYPE_SCALE;
-    const isRawMaterial = selectedProductType === PRODUCT_TYPE_RAW_MATERIAL;
+    const isRawLike = isRawMaterialLike(selectedProductType);
     const requirePluForScale = isScale && el.outSecond?.checked;
     const errs = validateForExport(items, selectedDepartment, selectedProductType, { requirePluForScale });
     if (errs.length > 0) {
@@ -1741,7 +1805,7 @@ function bindOutput() {
     const exportFilename = name || buildDefaultOutputFilename(selectedDepartment);
     exportXlsx(items, selectedDepartment, {
       sheetItem: el.outItem.checked,
-      sheetAdditional: !isScale && !isRawMaterial && el.outSecond?.checked,
+      sheetAdditional: !isScale && !isRawLike && el.outSecond?.checked,
       sheetIshida: isScale && el.outSecond?.checked,
       productType: selectedProductType,
       filename: exportFilename,
@@ -1775,27 +1839,24 @@ function bindOutput() {
         const parsed = parseItemSheet(ev.target.result);
         if (parsed.length === 0) {
           el.exportErrors.hidden = false;
-          el.exportErrors.textContent = getLang() === 'ja' ? '有効なItemシートがありません' : 'No valid Item sheet';
+          el.exportErrors.textContent = t('error.importNoItemSheet');
           return;
         }
-        pendingImportItems = parsed;
-        if (el.importModeModal) {
-          const isRawMaterial = selectedProductType === PRODUCT_TYPE_RAW_MATERIAL;
-          if (el.importModeDesc) {
-            el.importModeDesc.textContent = isRawMaterial
-              ? `${parsed.length}件読み込みました。既存リストに統合（バーコード照合）しますか？`
-              : `${parsed.length}件読み込みました。インポートモードを選択してください。`;
-          }
-          el.importModeModal.hidden = false;
-        } else {
-          applyImportReplace(parsed);
+        // バリデーション: 部門・分類・商品区分の整合性チェック
+        const importErrors = validateImportItems(parsed, selectedDepartment, selectedProductType);
+        if (importErrors.length > 0) {
+          el.exportErrors.hidden = false;
+          el.exportErrors.textContent = formatImportErrors(importErrors);
+          return;
         }
+        applyImportReplace(parsed);
         el.exportErrors.hidden = true;
       } catch (err) {
         el.exportErrors.hidden = false;
-        el.exportErrors.textContent = (getLang() === 'ja' ? '読み込みエラー: ' : 'Import error: ') + err.message;
+        el.exportErrors.textContent = t('error.importReadError') + err.message;
+      } finally {
+        e.target.value = '';
       }
-      e.target.value = '';
     };
     reader.readAsArrayBuffer(file);
   });
@@ -1965,7 +2026,7 @@ async function loadMastersFromApi(dept) {
       { supplierNo: '11100091', abbreviation: 'NESTLE', nameEng: 'Nestle', nameTha: 'เนสเล่' },
     ]);
     if (el.masterStatus) {
-      el.masterStatus.textContent = '⚠ サンプルデータを使用中（DBに接続できません）';
+      el.masterStatus.textContent = t('msg.sampleDataWarning');
       el.masterStatus.hidden = false;
     }
   }
