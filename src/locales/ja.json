@@ -19,6 +19,7 @@
     "orderQty": "発注入数",
     "orderUnit": "発注単位",
     "leadTime": "発注リードタイム（日）",
+    "supplierItemCode": "仕入先アイテムコード",
     "unitPrice": "売価",
     "salesQty": "販売入数",
     "caseBarcode": "ケースJANコード",

@@ -92,6 +92,7 @@ const el = {
   orderQty: document.getElementById('orderQty'),
   orderUnit: document.getElementById('orderUnit'),
   leadTime: document.getElementById('leadTime'),
+  supplierItemCode: document.getElementById('supplierItemCode'),
   unitPrice: document.getElementById('unitPrice'),
   grossMargin: document.getElementById('grossMargin'),
   salesQty: document.getElementById('salesQty'),
@@ -732,7 +733,7 @@ function bindForm() {
   const ENTER_FOCUS_ORDER = [
     'barcode', 'nameEng', 'nameTha', 'productGroup',
     'sizeEng', 'sizeTha', 'taxRate', 'manufacturingLocation', 'pluNo',
-    'supplier', 'unitCost', 'orderQty', 'orderUnit', 'leadTime', 'unitPrice', 'salesQty',
+    'supplier', 'unitCost', 'orderQty', 'orderUnit', 'leadTime', 'supplierItemCode', 'unitPrice', 'salesQty',
     'caseBarcode', 'caseName', 'caseSizeEng', 'caseSizeTha', 'casePrice',
     'brandEng', 'brandTha',
   ];
@@ -833,6 +834,7 @@ function getFormData() {
     orderQty: el.orderQty.value,
     orderUnit: el.orderUnit?.value || 'PCS',
     leadTime: el.leadTime.value,
+    supplierItemCode: el.supplierItemCode ? el.supplierItemCode.value.trim() : '',
     unitPrice: cleanNumeric(el.unitPrice.value),
     salesQty: el.salesQty.value,
     caseBarcode: el.caseBarcode.value.trim(),
@@ -876,6 +878,7 @@ function formDataToItem(f) {
     orderQty: !isRawMaterial && f.orderQty !== '' ? Number(f.orderQty) : 1,
     orderUnit: isRawMaterial ? (f.orderUnit || 'PCS') : 'PCS',
     leadTime: f.leadTime !== '' ? Number(f.leadTime) : DEFAULT_LEAD_TIME,
+    supplierItemCode: f.supplierItemCode || '',
     unitPrice: !isRawMaterial && f.unitPrice !== '' ? Number(f.unitPrice) : undefined,
     salesQty: !isRawMaterial && f.salesQty !== '' ? Number(f.salesQty) : DEFAULT_SALES_QTY,
     caseBarcode: f.caseBarcode,
@@ -1754,6 +1757,7 @@ function fillForm(item) {
   el.orderQty.value = item.orderQty != null ? item.orderQty : '';
   if (el.orderUnit) el.orderUnit.value = item.orderUnit || 'PCS';
   el.leadTime.value = item.leadTime != null ? item.leadTime : DEFAULT_LEAD_TIME;
+  if (el.supplierItemCode) el.supplierItemCode.value = item.supplierItemCode || '';
   el.unitPrice.value = item.unitPrice != null ? item.unitPrice : '';
   el.salesQty.value = item.salesQty != null ? item.salesQty : DEFAULT_SALES_QTY;
   el.caseBarcode.value = item.caseBarcode || '';

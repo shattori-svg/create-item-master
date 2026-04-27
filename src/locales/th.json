@@ -19,6 +19,7 @@
     "orderQty": "จำนวนสั่งซื้อ",
     "orderUnit": "หน่วยสั่งซื้อ",
     "leadTime": "ระยะเวลานำ (วัน)",
+    "supplierItemCode": "รหัสสินค้าของผู้ขาย",
     "unitPrice": "ราคาขาย",
     "salesQty": "จำนวนขาย",
     "caseBarcode": "บาร์โค้ดกล่อง",

@@ -44,7 +44,7 @@ const ISHIDA_LABEL_HEADERS = [
 ];
 
 /** フォームで編集する列のインデックス（これ以外は _rawItemRow をそのまま保持） */
-const ITEM_MANAGED_INDICES = [0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41];
+const ITEM_MANAGED_INDICES = [0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41];
 
 function itemToRow(item, departmentCode, options = {}) {
   const { productType = 'manufacturer' } = options;
@@ -91,7 +91,7 @@ function itemToRow(item, departmentCode, options = {}) {
     inventoryType, inventoryPostingGroup, postingGroup, vat,
     // "Name (CODE)" 形式が混入していた場合はコード部分のみ抽出
     (item.supplierCode ? String(item.supplierCode).replace(/^.*[（(]([^）)]+)[）)]\s*$/, '$1').trim() : ''), // 23: Vendor No. (default)
-    null, // 24: Vendor Item No. (default) は上書きしない
+    item.supplierItemCode ? String(item.supplierItemCode).trim() : '', // 24: Vendor Item No. (default)
     item.unitCost != null ? Number(item.unitCost) : '', // 25: Unit Cost (default)
     ITEM_FIXED.autoReplenishment,
     item.leadTime != null ? Number(item.leadTime) : 2,
@@ -113,7 +113,6 @@ function itemToRow(item, departmentCode, options = {}) {
   }
   const out = values.slice();
   out[4] = item.itemNo ?? '';
-  out[24] = '';
   return out;
 }
 
@@ -350,6 +349,7 @@ export function parseItemSheet(buffer) {
   const vatCol = map['VAT Prod. Posting Group'];
   const genProdCol = map['Gen. Prod. Posting Group'];
   const vendorCol = map['Vendor No. (default)'];
+  const vendorItemNoCol = map['Vendor Item No. (default)'];
   const costCol = map['Unit Cost (default)'];
   const priceCol = map['Unit Price (default)'];
   const leadCol = map['Lead Time Calculation (default)'];
@@ -388,6 +388,7 @@ export function parseItemSheet(buffer) {
       manufacturingLocation: get(genProdCol) === POSTING_GROUP_CKPC ? 'ckpc' : 'instore',
       supplierCode: get(vendorCol),
       supplier: get(vendorCol),
+      supplierItemCode: get(vendorItemNoCol),
       unitCost: getNum(costCol),
       orderQty,
       orderUnit: (() => {
