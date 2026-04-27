@@ -4,3 +4,13 @@ dist/
 .env.local
 *.log
 .DS_Store
+
+# Local working files
+.claude/
+TODO.md
+
+# Local runtime data (users.json fallback, etc.)
+data/
+
+# Reference / sample spreadsheets dropped under docs/
+docs/Item_*.xlsx
