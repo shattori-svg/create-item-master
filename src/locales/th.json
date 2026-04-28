@@ -163,7 +163,14 @@
     "downloadBtn": "ดาวน์โหลด",
     "downloadUnavailable": "ไม่ได้จัดเก็บ",
     "downloadExpired": "หมดอายุการเก็บ",
-    "downloadFailed": "ดาวน์โหลดล้มเหลว"
+    "downloadFailed": "ดาวน์โหลดล้มเหลว",
+    "filterSearchPh": "ค้นหาด้วยผู้ใช้ / ชื่อไฟล์",
+    "filterDeptAll": "ทุกแผนก",
+    "filterDateFrom": "วันที่เริ่มต้น",
+    "filterDateTo": "วันที่สิ้นสุด",
+    "filterClear": "ล้าง",
+    "filterSummary": "{shown} / {total} รายการ",
+    "filterNoMatch": "ไม่พบบันทึกที่ตรงกัน"
   },
   "help": {
     "title": "คู่มือการใช้งาน",

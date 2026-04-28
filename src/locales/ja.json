@@ -163,7 +163,14 @@
     "downloadBtn": "ダウンロード",
     "downloadUnavailable": "保存対象外",
     "downloadExpired": "保存期限切れ",
-    "downloadFailed": "ダウンロードに失敗しました"
+    "downloadFailed": "ダウンロードに失敗しました",
+    "filterSearchPh": "ユーザー / ファイル名で検索",
+    "filterDeptAll": "全部門",
+    "filterDateFrom": "開始日",
+    "filterDateTo": "終了日",
+    "filterClear": "クリア",
+    "filterSummary": "{shown} / {total} 件",
+    "filterNoMatch": "該当するログがありません"
   },
   "help": {
     "title": "使い方ガイド",

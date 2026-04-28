@@ -140,6 +140,13 @@ const el = {
   adminTabMasters: document.getElementById('admin-tab-masters'),
   adminTabLogs: document.getElementById('admin-tab-logs'),
   adminLogsContent: document.getElementById('admin-logs-content'),
+  adminLogsFilter: document.getElementById('admin-logs-filter'),
+  adminLogsQ: document.getElementById('admin-logs-q'),
+  adminLogsDept: document.getElementById('admin-logs-dept'),
+  adminLogsDateFrom: document.getElementById('admin-logs-date-from'),
+  adminLogsDateTo: document.getElementById('admin-logs-date-to'),
+  adminLogsClear: document.getElementById('admin-logs-clear'),
+  adminLogsSummary: document.getElementById('admin-logs-summary'),
   btnUndo: document.getElementById('btn-undo'),
   btnRedo: document.getElementById('btn-redo'),
   sessionExpiredModal: document.getElementById('session-expired-modal'),
@@ -304,6 +311,7 @@ function bindAuth() {
       if (target === 'logs') fetchAdminLogs();
     });
   });
+  bindAdminLogsFilter();
   // 使い方ガイド
   if (el.btnHelp && el.helpModal) {
     el.btnHelp.addEventListener('click', () => { el.helpModal.hidden = false; });
@@ -453,41 +461,124 @@ async function saveUserAdmin(tr, userId) {
   }
 }
 
+// 保管期間 90日。created_at から 90日経過した行はオブジェクトが既に削除されている可能性が高い
+const LOG_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+let allAdminLogs = [];
+
 async function fetchAdminLogs() {
   if (!el.adminLogsContent) return;
   el.adminLogsContent.innerHTML = `<p>${t('admin.loading')}</p>`;
   try {
     const res = await fetch('/api/admin/logs', { credentials: 'include' });
     if (!res.ok) throw new Error(`${res.status}`);
-    const logs = await res.json();
-    if (logs.length === 0) {
-      el.adminLogsContent.innerHTML = `<p>${t('admin.noLogs')}</p>`;
-      return;
-    }
-    const locale = getLang() === 'ja' ? 'ja-JP' : 'th-TH';
-    // 保管期間 90日。created_at から 90日経過した行はオブジェクトが既に削除されている可能性が高いので
-    // ボタンの代わりに「保存期限切れ」表示にする。
-    const RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
-    const now = Date.now();
-    const rows = logs.map((log) => {
-      const date = new Date(log.created_at).toLocaleString(locale);
-      const user = escapeHtml(log.user_display_name || log.username || '—');
-      const dept = escapeHtml(log.dept || '—');
-      const count = log.item_count ?? '—';
-      const filename = escapeHtml(log.filename || '—');
-      let download;
-      if (!log.storage_path) {
-        download = `<span class="admin-logs-unavail">${t('log.downloadUnavailable')}</span>`;
-      } else if (now - new Date(log.created_at).getTime() > RETENTION_MS) {
-        download = `<span class="admin-logs-unavail">${t('log.downloadExpired')}</span>`;
-      } else {
-        download = `<a class="admin-logs-download" href="/api/admin/logs/${log.id}/download" target="_blank" rel="noopener">${t('log.downloadBtn')}</a>`;
-      }
-      return `<tr><td>${date}</td><td>${user}</td><td>${dept}</td><td>${count}</td><td>${filename}</td><td>${download}</td></tr>`;
-    }).join('');
-    el.adminLogsContent.innerHTML = `<table class="admin-logs-table"><thead><tr><th>${t('log.datetime')}</th><th>${t('log.user')}</th><th>${t('log.dept')}</th><th>${t('log.count')}</th><th>${t('log.filename')}</th><th>${t('log.download')}</th></tr></thead><tbody>${rows}</tbody></table>`;
+    allAdminLogs = await res.json();
+    populateAdminLogsDeptOptions();
+    if (el.adminLogsFilter) el.adminLogsFilter.hidden = allAdminLogs.length === 0;
+    renderAdminLogs();
   } catch (err) {
+    if (el.adminLogsFilter) el.adminLogsFilter.hidden = true;
     el.adminLogsContent.innerHTML = `<p class="admin-logs-error">${t('admin.loadFailed')}${escapeHtml(err.message)}</p>`;
+  }
+}
+
+/** dept セレクトに、ログに登場する部門コードを populate（重複なし、昇順） */
+function populateAdminLogsDeptOptions() {
+  if (!el.adminLogsDept) return;
+  const current = el.adminLogsDept.value;
+  const depts = [...new Set(allAdminLogs.map((l) => l.dept).filter(Boolean))].sort();
+  // 先頭の「全部門」option は残し、それ以降を作り直す
+  while (el.adminLogsDept.options.length > 1) el.adminLogsDept.remove(1);
+  for (const d of depts) {
+    const opt = document.createElement('option');
+    opt.value = d;
+    opt.textContent = d;
+    el.adminLogsDept.appendChild(opt);
+  }
+  el.adminLogsDept.value = current;
+}
+
+function getAdminLogsFilter() {
+  return {
+    q: (el.adminLogsQ?.value || '').trim().toLowerCase(),
+    dept: el.adminLogsDept?.value || '',
+    from: el.adminLogsDateFrom?.value || '',
+    to: el.adminLogsDateTo?.value || '',
+  };
+}
+
+function applyAdminLogsFilter(logs, f) {
+  // date input の値は 'YYYY-MM-DD' (ローカル日付)。created_at は ISO UTC。
+  // ローカル時刻換算で from 00:00 ～ to 23:59:59 の範囲にする。
+  const fromMs = f.from ? new Date(f.from + 'T00:00:00').getTime() : null;
+  const toMs = f.to ? new Date(f.to + 'T23:59:59.999').getTime() : null;
+  return logs.filter((log) => {
+    if (f.dept && log.dept !== f.dept) return false;
+    if (fromMs != null || toMs != null) {
+      const t = new Date(log.created_at).getTime();
+      if (fromMs != null && t < fromMs) return false;
+      if (toMs != null && t > toMs) return false;
+    }
+    if (f.q) {
+      const hay = `${log.user_display_name || ''} ${log.username || ''} ${log.filename || ''}`.toLowerCase();
+      if (!hay.includes(f.q)) return false;
+    }
+    return true;
+  });
+}
+
+function renderAdminLogs() {
+  if (!el.adminLogsContent) return;
+  if (allAdminLogs.length === 0) {
+    el.adminLogsContent.innerHTML = `<p>${t('admin.noLogs')}</p>`;
+    if (el.adminLogsSummary) el.adminLogsSummary.textContent = '';
+    return;
+  }
+  const filter = getAdminLogsFilter();
+  const filtered = applyAdminLogsFilter(allAdminLogs, filter);
+  if (el.adminLogsSummary) {
+    el.adminLogsSummary.textContent = t('log.filterSummary')
+      .replace('{shown}', String(filtered.length))
+      .replace('{total}', String(allAdminLogs.length));
+  }
+  if (filtered.length === 0) {
+    el.adminLogsContent.innerHTML = `<p style="text-align:center;color:#888">${t('log.filterNoMatch')}</p>`;
+    return;
+  }
+  const locale = getLang() === 'ja' ? 'ja-JP' : 'th-TH';
+  const now = Date.now();
+  const rows = filtered.map((log) => {
+    const date = new Date(log.created_at).toLocaleString(locale);
+    const user = escapeHtml(log.user_display_name || log.username || '—');
+    const dept = escapeHtml(log.dept || '—');
+    const count = log.item_count ?? '—';
+    const filename = escapeHtml(log.filename || '—');
+    let download;
+    if (!log.storage_path) {
+      download = `<span class="admin-logs-unavail">${t('log.downloadUnavailable')}</span>`;
+    } else if (now - new Date(log.created_at).getTime() > LOG_RETENTION_MS) {
+      download = `<span class="admin-logs-unavail">${t('log.downloadExpired')}</span>`;
+    } else {
+      download = `<a class="admin-logs-download" href="/api/admin/logs/${log.id}/download" target="_blank" rel="noopener">${t('log.downloadBtn')}</a>`;
+    }
+    return `<tr><td>${date}</td><td>${user}</td><td>${dept}</td><td>${count}</td><td class="admin-logs-filename">${filename}</td><td>${download}</td></tr>`;
+  }).join('');
+  el.adminLogsContent.innerHTML = `<table class="admin-logs-table"><thead><tr><th>${t('log.datetime')}</th><th>${t('log.user')}</th><th>${t('log.dept')}</th><th>${t('log.count')}</th><th>${t('log.filename')}</th><th>${t('log.download')}</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function bindAdminLogsFilter() {
+  const onChange = () => renderAdminLogs();
+  if (el.adminLogsQ) el.adminLogsQ.addEventListener('input', onChange);
+  if (el.adminLogsDept) el.adminLogsDept.addEventListener('change', onChange);
+  if (el.adminLogsDateFrom) el.adminLogsDateFrom.addEventListener('change', onChange);
+  if (el.adminLogsDateTo) el.adminLogsDateTo.addEventListener('change', onChange);
+  if (el.adminLogsClear) {
+    el.adminLogsClear.addEventListener('click', () => {
+      if (el.adminLogsQ) el.adminLogsQ.value = '';
+      if (el.adminLogsDept) el.adminLogsDept.value = '';
+      if (el.adminLogsDateFrom) el.adminLogsDateFrom.value = '';
+      if (el.adminLogsDateTo) el.adminLogsDateTo.value = '';
+      renderAdminLogs();
+    });
   }
 }
 

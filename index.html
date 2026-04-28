@@ -357,6 +357,17 @@
 
       <!-- 操作ログタブ -->
       <div id="admin-tab-logs" class="admin-tab-panel" hidden>
+        <div class="admin-logs-filter" id="admin-logs-filter" hidden>
+          <input type="search" id="admin-logs-q" class="admin-logs-filter-q" data-i18n="log.filterSearchPh" placeholder="ユーザー / ファイル名で検索" />
+          <select id="admin-logs-dept">
+            <option value="" data-i18n="log.filterDeptAll">全部門</option>
+          </select>
+          <input type="date" id="admin-logs-date-from" title="開始日" />
+          <span>〜</span>
+          <input type="date" id="admin-logs-date-to" title="終了日" />
+          <button type="button" id="admin-logs-clear" class="admin-logs-filter-clear" data-i18n="log.filterClear">クリア</button>
+          <span id="admin-logs-summary" class="admin-logs-summary"></span>
+        </div>
         <div id="admin-logs-content" class="admin-logs-content">
           <p style="text-align:center;color:#888" data-i18n="admin.tabLoading">タブを開くと読み込みます</p>
         </div>
