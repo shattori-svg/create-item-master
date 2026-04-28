@@ -15,11 +15,17 @@ Write-Host "Building and pushing: $ImageName"
 gcloud builds submit --tag $ImageName --project $ProjectId
 
 Write-Host "Deploying to Cloud Run..."
-gcloud run deploy $ServiceName `
-  --image $ImageName `
-  --region $Region `
-  --platform managed `
-  --allow-unauthenticated `
-  --project $ProjectId
+$DeployArgs = @(
+  "run", "deploy", $ServiceName,
+  "--image", $ImageName,
+  "--region", $Region,
+  "--platform", "managed",
+  "--allow-unauthenticated",
+  "--project", $ProjectId
+)
+if ($env:GCS_EXPORTS_BUCKET) {
+  $DeployArgs += @("--update-env-vars", "GCS_EXPORTS_BUCKET=$($env:GCS_EXPORTS_BUCKET)")
+}
+& gcloud @DeployArgs
 
 Write-Host "Done. Check the service URL in the console or: gcloud run services describe $ServiceName --region $Region --format='value(status.url)'"

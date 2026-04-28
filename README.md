@@ -136,9 +136,91 @@ Cloud Run では `.env` は自動で使われません。次の環境変数を *
 ```text
 VITE_GEMINI_API_KEY=あなたのGemini APIキー
 VITE_GOOGLE_SHEETS_API_KEY=あなたのGoogle Sheets APIキー
+GCS_EXPORTS_BUCKET=item-import-exports-dev   # 出力xlsx保管バケット（後述）
 ```
 
 このアプリはコンテナ起動時に環境変数から `/config.js` を生成し、ブラウザ側で読み込みます。
+
+## 出力ファイル保管（GCS）のセットアップ
+
+操作ログから過去の xlsx を再ダウンロード可能にするため、出力ファイルは **Google Cloud Storage (GCS)** に保管します。保持期間 **90 日**（lifecycle で自動削除）、ダウンロードは **admin ロールのみ**。
+
+### 前提
+
+- gcloud CLI がインストール・認証済み
+- 対象プロジェクトの `Storage Admin` / `IAM Admin` 権限を持つアカウントで実行
+
+### 手順
+
+以下を1度だけ実行します。`PROJECT_ID` と `BUCKET` は環境に合わせて変更してください。
+
+```bash
+# 0. 変数を設定
+PROJECT_ID="$(gcloud config get-value project)"
+REGION="asia-northeast1"
+BUCKET="item-import-exports-dev"        # 環境ごとに -dev / -prod を分ける
+SERVICE_NAME="item-master-create-dev"   # Cloud Run サービス名
+
+# 1. バケット作成（uniform bucket-level access、非公開）
+gcloud storage buckets create "gs://${BUCKET}" \
+  --project="${PROJECT_ID}" \
+  --location="${REGION}" \
+  --uniform-bucket-level-access \
+  --public-access-prevention
+
+# 2. 90日 lifecycle ルールを設定（age=90 で削除）
+cat > /tmp/lifecycle.json <<'JSON'
+{
+  "lifecycle": {
+    "rule": [
+      { "action": { "type": "Delete" }, "condition": { "age": 90 } }
+    ]
+  }
+}
+JSON
+gcloud storage buckets update "gs://${BUCKET}" --lifecycle-file=/tmp/lifecycle.json
+
+# 3. Cloud Run 実行サービスアカウント（既定: ${PROJECT_NUMBER}-compute@developer.gserviceaccount.com）にバケット書込権限を付与
+#    Cloud Run サービス未デプロイ時は describe が失敗するため stderr を捨て、フォールバックを利かせる
+RUNTIME_SA="$(gcloud run services describe "${SERVICE_NAME}" --region="${REGION}" --format='value(spec.template.spec.serviceAccountName)' 2>/dev/null)"
+[ -z "${RUNTIME_SA}" ] && RUNTIME_SA="$(gcloud projects describe "${PROJECT_ID}" --format='value(projectNumber)')-compute@developer.gserviceaccount.com"
+
+gcloud storage buckets add-iam-policy-binding "gs://${BUCKET}" \
+  --member="serviceAccount:${RUNTIME_SA}" \
+  --role="roles/storage.objectAdmin"
+
+# 4. V4 signed URL 発行のため、実行 SA に自身を impersonate する権限を付与
+#    （IAM signBlob API を使うため。鍵 JSON を持たないランタイムでは必須）
+gcloud iam service-accounts add-iam-policy-binding "${RUNTIME_SA}" \
+  --member="serviceAccount:${RUNTIME_SA}" \
+  --role="roles/iam.serviceAccountTokenCreator" \
+  --project="${PROJECT_ID}"
+```
+
+### Cloud Run へバケット名を渡す
+
+`deploy.sh` / `deploy.ps1` は `GCS_EXPORTS_BUCKET` 環境変数を Cloud Run サービスに伝搬します。デプロイ時に次のいずれかで指定してください。
+
+```bash
+# 一時的に
+GCS_EXPORTS_BUCKET="item-import-exports-dev" ./deploy.sh
+
+# 永続化したい場合（手動 or Console）
+gcloud run services update "${SERVICE_NAME}" \
+  --region="${REGION}" \
+  --update-env-vars="GCS_EXPORTS_BUCKET=item-import-exports-dev"
+```
+
+### ローカル開発時
+
+ローカル `node server.js` から GCS に書き込む場合は **Application Default Credentials** が必要です。
+
+```bash
+gcloud auth application-default login
+export GCS_EXPORTS_BUCKET="item-import-exports-dev"
+```
+
+`GCS_EXPORTS_BUCKET` が未設定の場合、サーバーは GCS への保管をスキップし、操作ログのみ記録します（後方互換）。
 
 ## 制限・注意
 

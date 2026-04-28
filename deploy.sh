@@ -14,11 +14,16 @@ echo "Building and pushing: ${IMAGE_NAME}"
 gcloud builds submit --tag "${IMAGE_NAME}" --project "${PROJECT_ID}"
 
 echo "Deploying to Cloud Run..."
-gcloud run deploy "${SERVICE_NAME}" \
-  --image "${IMAGE_NAME}" \
-  --region "${REGION}" \
-  --platform managed \
-  --allow-unauthenticated \
+DEPLOY_FLAGS=(
+  --image "${IMAGE_NAME}"
+  --region "${REGION}"
+  --platform managed
+  --allow-unauthenticated
   --project "${PROJECT_ID}"
+)
+if [ -n "${GCS_EXPORTS_BUCKET:-}" ]; then
+  DEPLOY_FLAGS+=(--update-env-vars "GCS_EXPORTS_BUCKET=${GCS_EXPORTS_BUCKET}")
+fi
+gcloud run deploy "${SERVICE_NAME}" "${DEPLOY_FLAGS[@]}"
 
 echo "Done. URL: https://${SERVICE_NAME}-${PROJECT_ID}.${REGION}.run.app/"
