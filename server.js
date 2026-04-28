@@ -5,6 +5,7 @@ import express from 'express';
 import session from 'express-session';
 import multer from 'multer';
 import { createClient } from '@supabase/supabase-js';
+import { Storage } from '@google-cloud/storage';
 import * as XLSX from 'xlsx';
 import * as entraAuth from './entra-auth.js';
 import {
@@ -23,7 +24,28 @@ const supabase = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
   ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
   : null;
 
+// --- GCS client (export retention bucket) ---
+// 90日 lifecycle のバケットに xlsx を保管。バケット未設定時は保管をスキップして
+// 既存の操作ログのみ記録する（後方互換）
+const GCS_EXPORTS_BUCKET = process.env.GCS_EXPORTS_BUCKET || '';
+const gcsBucket = GCS_EXPORTS_BUCKET ? new Storage().bucket(GCS_EXPORTS_BUCKET) : null;
+const SIGNED_URL_TTL_MS = 5 * 60 * 1000;
+
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+/**
+ * GCS に保管する xlsx のオブジェクトパスを生成する。
+ * `exports/{YYYY}/{MM}/{DD}/{log_id}_{sanitized_filename}` 形式。
+ * ファイル名はパス区切り文字を取り除き、安全側に倒す。
+ */
+function buildExportObjectPath(logId, filename) {
+  const now = new Date();
+  const yyyy = String(now.getFullYear());
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const safeName = String(filename || 'export.xlsx').replace(/[/\\]/g, '_').slice(-200);
+  return `exports/${yyyy}/${mm}/${dd}/${logId}_${safeName}`;
+}
 
 // Supabase クライアントをユーザーストアに注入
 initUsersStore(supabase);
@@ -393,33 +415,73 @@ app.post('/api/masters/suppliers/import', requireAuth, upload.single('file'), as
 
 // --- Operation Log ---
 
-async function logOperation(req, { action, dept, itemCount, filename, details }) {
-  if (!supabase) return;
-  try {
-    await supabase.from('operation_log').insert({
-      username: req.session.username || null,
-      user_display_name: req.session.displayName || null,
-      action,
-      dept: dept || null,
-      item_count: itemCount ?? null,
-      filename: filename || null,
-      details: details || null,
-    });
-  } catch (err) {
-    console.error('logOperation failed:', err.message);
+/**
+ * 出力イベントを operation_log に記録し、xlsx ファイルが添付されていれば
+ * GCS に保管する。multipart/form-data で受ける:
+ *   - file: 出力 xlsx 本体（任意。GCS バケット未設定時は無視）
+ *   - dept, itemCount, filename: テキストフィールド
+ *   - items: JSON 文字列化された配列（互換のため details に保管）
+ */
+app.post('/api/log/export', requireAuth, upload.single('file'), async (req, res) => {
+  if (!supabase) return res.status(503).json({ error: 'Database not configured' });
+  const dept = String(req.body?.dept || '');
+  const itemCount = Number(req.body?.itemCount) || 0;
+  const filename = String(req.body?.filename || '');
+  let items = [];
+  if (req.body?.items) {
+    try { items = JSON.parse(req.body.items); }
+    catch { items = []; }
   }
-}
 
-app.post('/api/log/export', requireAuth, async (req, res) => {
-  const { dept, itemCount, filename, items: exportItems } = req.body || {};
-  await logOperation(req, {
-    action: 'export',
-    dept: String(dept || ''),
-    itemCount: Number(itemCount) || 0,
-    filename: String(filename || ''),
-    details: { items: exportItems || [] },
-  });
-  return res.json({ ok: true });
+  let logId = null;
+  try {
+    const { data, error } = await supabase
+      .from('operation_log')
+      .insert({
+        username: req.session.username || null,
+        user_display_name: req.session.displayName || null,
+        action: 'export',
+        dept: dept || null,
+        item_count: itemCount,
+        filename: filename || null,
+        details: { items },
+      })
+      .select('id')
+      .single();
+    if (error) throw error;
+    logId = data.id;
+  } catch (err) {
+    console.error('POST /api/log/export insert:', err.message);
+    return res.status(500).json({ error: 'log_insert_failed' });
+  }
+
+  // GCS 保管はバケットとファイルが揃っているときのみ。失敗してもログ自体は残す。
+  if (gcsBucket && req.file) {
+    const objectPath = buildExportObjectPath(logId, filename);
+    try {
+      await gcsBucket.file(objectPath).save(req.file.buffer, {
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        resumable: false,
+        metadata: {
+          metadata: {
+            logId: String(logId),
+            originalFilename: filename,
+            uploadedBy: req.session.username || '',
+          },
+        },
+      });
+      const { error: updErr } = await supabase
+        .from('operation_log')
+        .update({ storage_path: objectPath })
+        .eq('id', logId);
+      if (updErr) throw updErr;
+    } catch (err) {
+      console.error('POST /api/log/export gcs upload:', err.message);
+      // storage_path 未設定のままログだけ残る → 後方互換と同じ扱い
+    }
+  }
+
+  return res.json({ ok: true, logId });
 });
 
 app.get('/api/admin/logs', requireAdmin, async (req, res) => {
@@ -427,13 +489,50 @@ app.get('/api/admin/logs', requireAdmin, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('operation_log')
-      .select('id, created_at, username, user_display_name, action, dept, item_count, filename')
+      .select('id, created_at, username, user_display_name, action, dept, item_count, filename, storage_path')
       .order('created_at', { ascending: false })
       .limit(200);
     if (error) throw error;
     return res.json(data || []);
   } catch (err) {
     console.error('GET /api/admin/logs:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * 操作ログから保管済み xlsx を再ダウンロードする。
+ * V4 signed URL を5分有効で発行し、302 リダイレクトする。
+ * 保管対象外（過去ログ等）や 90日経過で物理削除済みの場合は 404 を返す。
+ */
+app.get('/api/admin/logs/:id/download', requireAdmin, async (req, res) => {
+  if (!supabase) return res.status(503).json({ error: 'Database not configured' });
+  if (!gcsBucket) return res.status(503).json({ error: 'storage_not_configured' });
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid_id' });
+  try {
+    const { data, error } = await supabase
+      .from('operation_log')
+      .select('id, filename, storage_path')
+      .eq('id', id)
+      .single();
+    if (error || !data) return res.status(404).json({ error: 'log_not_found' });
+    if (!data.storage_path) return res.status(404).json({ error: 'file_not_retained' });
+
+    const file = gcsBucket.file(data.storage_path);
+    const [exists] = await file.exists();
+    if (!exists) return res.status(404).json({ error: 'file_expired' });
+
+    const downloadName = String(data.filename || 'export.xlsx').replace(/[/\\"]/g, '_');
+    const [signedUrl] = await file.getSignedUrl({
+      version: 'v4',
+      action: 'read',
+      expires: Date.now() + SIGNED_URL_TTL_MS,
+      responseDisposition: `attachment; filename="${downloadName}"`,
+    });
+    return res.redirect(signedUrl);
+  } catch (err) {
+    console.error('GET /api/admin/logs/:id/download:', err);
     return res.status(500).json({ error: err.message });
   }
 });

@@ -10,7 +10,7 @@ import { setGroupMaster, setSupplierMaster, getGroupMasterForDepartment, getSupp
 import { suggestClassificationWithGenAI, hasGenAIConfig } from './lib/genaiSuggest.js';
 import { fetchMastersFromApi, clearMastersCache } from './lib/mastersApi.js';
 import { validateFormFields, validateForExport, validateImportItems } from './lib/validation.js';
-import { exportXlsx, parseItemSheet } from './lib/excel.js';
+import { buildXlsxBuffer, downloadXlsxBuffer, parseItemSheet } from './lib/excel.js';
 
 // --- State ---
 let items = [];
@@ -465,15 +465,27 @@ async function fetchAdminLogs() {
       return;
     }
     const locale = getLang() === 'ja' ? 'ja-JP' : 'th-TH';
+    // 保管期間 90日。created_at から 90日経過した行はオブジェクトが既に削除されている可能性が高いので
+    // ボタンの代わりに「保存期限切れ」表示にする。
+    const RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
     const rows = logs.map((log) => {
       const date = new Date(log.created_at).toLocaleString(locale);
       const user = escapeHtml(log.user_display_name || log.username || '—');
       const dept = escapeHtml(log.dept || '—');
       const count = log.item_count ?? '—';
       const filename = escapeHtml(log.filename || '—');
-      return `<tr><td>${date}</td><td>${user}</td><td>${dept}</td><td>${count}</td><td>${filename}</td></tr>`;
+      let download;
+      if (!log.storage_path) {
+        download = `<span class="admin-logs-unavail">${t('log.downloadUnavailable')}</span>`;
+      } else if (now - new Date(log.created_at).getTime() > RETENTION_MS) {
+        download = `<span class="admin-logs-unavail">${t('log.downloadExpired')}</span>`;
+      } else {
+        download = `<a class="admin-logs-download" href="/api/admin/logs/${log.id}/download" target="_blank" rel="noopener">${t('log.downloadBtn')}</a>`;
+      }
+      return `<tr><td>${date}</td><td>${user}</td><td>${dept}</td><td>${count}</td><td>${filename}</td><td>${download}</td></tr>`;
     }).join('');
-    el.adminLogsContent.innerHTML = `<table class="admin-logs-table"><thead><tr><th>${t('log.datetime')}</th><th>${t('log.user')}</th><th>${t('log.dept')}</th><th>${t('log.count')}</th><th>${t('log.filename')}</th></tr></thead><tbody>${rows}</tbody></table>`;
+    el.adminLogsContent.innerHTML = `<table class="admin-logs-table"><thead><tr><th>${t('log.datetime')}</th><th>${t('log.user')}</th><th>${t('log.dept')}</th><th>${t('log.count')}</th><th>${t('log.filename')}</th><th>${t('log.download')}</th></tr></thead><tbody>${rows}</tbody></table>`;
   } catch (err) {
     el.adminLogsContent.innerHTML = `<p class="admin-logs-error">${t('admin.loadFailed')}${escapeHtml(err.message)}</p>`;
   }
@@ -1700,27 +1712,33 @@ function applyImportReplace(parsed) {
 }
 
 
-async function logExportToServer(dept, exportItems, filename) {
+/**
+ * 操作ログ送信 + GCS 保管リクエスト。
+ * xlsx バッファを multipart/form-data で送ることで、サーバー側で
+ * 操作ログ insert と GCS upload を一気通貫で実行する。
+ * 失敗してもユーザーは既にローカルにファイルを得ているので致命ではない。
+ */
+async function logExportToServer(dept, exportItems, filename, buffer) {
   try {
-    await fetch('/api/log/export', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        dept,
-        itemCount: exportItems.length,
-        filename,
-        items: exportItems.map((it) => ({
-          barcode: it.barcode,
-          nameEng: it.nameEng,
-          nameTha: it.nameTha,
-          productGroupCode: it.productGroupCode,
-          supplierCode: it.supplierCode,
-          unitCost: it.unitCost,
-          unitPrice: it.unitPrice,
-        })),
-      }),
-    });
+    const summary = exportItems.map((it) => ({
+      barcode: it.barcode,
+      nameEng: it.nameEng,
+      nameTha: it.nameTha,
+      productGroupCode: it.productGroupCode,
+      supplierCode: it.supplierCode,
+      unitCost: it.unitCost,
+      unitPrice: it.unitPrice,
+    }));
+    const fd = new FormData();
+    fd.append('dept', dept);
+    fd.append('itemCount', String(exportItems.length));
+    fd.append('filename', filename);
+    fd.append('items', JSON.stringify(summary));
+    if (buffer) {
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      fd.append('file', blob, filename);
+    }
+    await fetch('/api/log/export', { method: 'POST', credentials: 'include', body: fd });
   } catch {
     // ログ失敗は無視
   }
@@ -1807,14 +1825,16 @@ function bindOutput() {
     el.exportErrors.hidden = true;
     const name = el.outputFilename.value.trim();
     const exportFilename = name || buildDefaultOutputFilename(selectedDepartment);
-    exportXlsx(items, selectedDepartment, {
+    const { buffer, filename: actualFilename } = buildXlsxBuffer(items, selectedDepartment, {
       sheetItem: el.outItem.checked,
       sheetAdditional: !isScale && !isRawLike && el.outSecond?.checked,
       sheetIshida: isScale && el.outSecond?.checked,
       productType: selectedProductType,
       filename: exportFilename,
     });
-    logExportToServer(selectedDepartment, items, exportFilename);
+    downloadXlsxBuffer(buffer, actualFilename);
+    // GCS 保管: ダウンロード後に同じバッファをサーバーへ送る。失敗してもユーザー体験には影響しない。
+    logExportToServer(selectedDepartment, items, actualFilename, buffer);
     showExportSuccessModal();
   });
   if (el.exportSuccessModal) {

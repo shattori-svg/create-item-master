@@ -158,7 +158,12 @@
     "user": "ผู้ใช้",
     "dept": "แผนก",
     "count": "จำนวน",
-    "filename": "ชื่อไฟล์"
+    "filename": "ชื่อไฟล์",
+    "download": "ดาวน์โหลด",
+    "downloadBtn": "ดาวน์โหลด",
+    "downloadUnavailable": "ไม่ได้จัดเก็บ",
+    "downloadExpired": "หมดอายุการเก็บ",
+    "downloadFailed": "ดาวน์โหลดล้มเหลว"
   },
   "help": {
     "title": "คู่มือการใช้งาน",

@@ -238,7 +238,11 @@ export function buildAdditionalBarcodeSheet(items) {
   return [ADDITIONAL_HEADERS, ...rows];
 }
 
-export function exportXlsx(items, departmentCode, options = {}) {
+/**
+ * 出力 xlsx のワークブックとファイル名を組み立てる。ダウンロード/送信は呼び出し側で行う。
+ * GCS 保管のためにブラウザでバッファを保持する必要があるので buildXlsxBuffer に分離している。
+ */
+function buildExportWorkbook(items, departmentCode, options = {}) {
   const { sheetItem = true, sheetAdditional = true, sheetIshida = false, productType = 'manufacturer', filename } = options;
   const wb = XLSX.utils.book_new();
 
@@ -259,7 +263,34 @@ export function exportXlsx(items, departmentCode, options = {}) {
 
   const name = filename || `${departmentCode}_${timestamp()}.xlsx`;
   const outName = name.replace(/\.xlsx$/i, '') + '.xlsx';
-  XLSX.writeFile(wb, outName);
+  return { wb, outName };
+}
+
+/** ブラウザで .xlsx バイナリ（Uint8Array）とファイル名を返す。GCS 送信用バッファとして使う。 */
+export function buildXlsxBuffer(items, departmentCode, options = {}) {
+  const { wb, outName } = buildExportWorkbook(items, departmentCode, options);
+  const buffer = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+  return { buffer, filename: outName };
+}
+
+/** 既存バッファをブラウザでダウンロードさせる。サーバー往復を伴わない純クライアント処理。 */
+export function downloadXlsxBuffer(buffer, filename) {
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+/** 後方互換: バッファ生成 + ダウンロードまでを一気にやる。バッファを返すので呼び出し側で再利用可能。 */
+export function exportXlsx(items, departmentCode, options = {}) {
+  const { buffer, filename } = buildXlsxBuffer(items, departmentCode, options);
+  downloadXlsxBuffer(buffer, filename);
+  return { buffer, filename };
 }
 
 function timestamp() {

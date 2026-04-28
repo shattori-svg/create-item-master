@@ -158,7 +158,12 @@
     "user": "ユーザー",
     "dept": "部門",
     "count": "件数",
-    "filename": "ファイル名"
+    "filename": "ファイル名",
+    "download": "ダウンロード",
+    "downloadBtn": "ダウンロード",
+    "downloadUnavailable": "保存対象外",
+    "downloadExpired": "保存期限切れ",
+    "downloadFailed": "ダウンロードに失敗しました"
   },
   "help": {
     "title": "使い方ガイド",
