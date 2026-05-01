@@ -166,6 +166,11 @@ input.readonly, input[readonly] {
   color: #333;
 }
 .form-step-body .form-group { margin-bottom: 0.6rem; }
+.form-check { display: inline-flex; align-items: center; gap: 0.4rem; margin-top: 0.35rem; font-size: 12px; color: #555; cursor: pointer; }
+.form-check input[type="checkbox"] { margin: 0; }
+.form-check--admin { color: #1f6feb; }
+.row-readonly { background: #fafafa; color: #666; }
+.row-readonly:hover { background: #fafafa; }
 .form-step-body .form-row { display: flex; gap: 0.75rem; }
 .form-step-body .form-row .form-group { flex: 1; }
 .form-step-body .form-row-narrow { gap: 0.5rem; }

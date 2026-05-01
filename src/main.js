@@ -139,6 +139,8 @@ const el = {
   adminTabUsers: document.getElementById('admin-tab-users'),
   adminTabMasters: document.getElementById('admin-tab-masters'),
   adminTabLogs: document.getElementById('admin-tab-logs'),
+  useInstoreCode: document.getElementById('useInstoreCode'),
+  useInstoreCodeWrap: document.getElementById('useInstoreCode-wrap'),
   adminLogsContent: document.getElementById('admin-logs-content'),
   adminLogsFilter: document.getElementById('admin-logs-filter'),
   adminLogsQ: document.getElementById('admin-logs-q'),
@@ -216,6 +218,7 @@ async function init() {
   if (el.outputFilename) el.outputFilename.value = '';
   toggleCaseFields(Number(el.salesQty?.value || 1) >= 2);
   bindForm();
+  bindInstoreCodeToggle();
   bindFocusSelectAll();
   bindRequiredFeedback();
   bindGrossMargin();
@@ -279,6 +282,15 @@ function applyAuthStatus(status) {
   if (el.btnAdmin) {
     el.btnAdmin.hidden = !(status.loggedIn && status.role === 'admin');
   }
+  // admin だけ「インストアコードで登録」のチェックボックスを表示する
+  if (el.useInstoreCodeWrap) {
+    el.useInstoreCodeWrap.hidden = !(status.loggedIn && status.role === 'admin');
+  }
+  applyProductTypeVisibility?.();
+}
+
+function isAdminUser() {
+  return Boolean(currentAuthStatus && currentAuthStatus.loggedIn && currentAuthStatus.role === 'admin');
 }
 
 function bindAuth() {
@@ -919,11 +931,35 @@ function cleanNumeric(val) {
   return s;
 }
 
+/** インストアコードチェックの状態に応じてバーコード入力欄を無効化する */
+function applyInstoreCodeVisibility() {
+  const checked = !!(el.useInstoreCode && el.useInstoreCode.checked);
+  if (el.barcode) {
+    el.barcode.disabled = checked;
+    if (checked) {
+      el.barcode.value = '';
+      // 入力欄に残っていたエラー表示を消す
+      el.barcode.classList.remove('error');
+      const errSpan = document.getElementById('err-barcode');
+      if (errSpan) errSpan.textContent = '';
+    }
+  }
+}
+
+function bindInstoreCodeToggle() {
+  if (!el.useInstoreCode) return;
+  el.useInstoreCode.addEventListener('change', () => {
+    applyInstoreCodeVisibility();
+    updateRequiredFeedback?.();
+  });
+}
+
 function getFormData() {
   return {
     productGroup: el.productGroup.value.trim(),
     productGroupCode: el.productGroupCode.value.trim(),
     barcode: el.barcode.value.trim(),
+    useInstoreCode: !!(el.useInstoreCode && el.useInstoreCode.checked && isAdminUser()),
     nameEng: el.nameEng.value.trim(),
     nameTha: el.nameTha.value.trim(),
     sizeEng: el.sizeEng.value.trim() || DEFAULT_SPEC_ENG,
@@ -959,7 +995,9 @@ function extractCodeFromDisplay(val) {
 
 function formDataToItem(f) {
   const isRawMaterial = isRawMaterialLike(selectedProductType);
-  const barcode = f.barcode != null ? String(f.barcode).trim() : '';
+  const useInstoreCode = !!f.useInstoreCode;
+  // インストアコード行は強制的にバーコード空・PLU 扱い
+  const barcode = useInstoreCode ? '' : (f.barcode != null ? String(f.barcode).trim() : '');
   // supplierCode が "Name (CODE)" 形式の場合はコード部分だけ取り出す
   const rawSupplierCode = f.supplierCode || f.supplier || '';
   const supplierCode = extractCodeFromDisplay(rawSupplierCode);
@@ -967,7 +1005,8 @@ function formDataToItem(f) {
     productGroupCode: f.productGroupCode || f.productGroup,
     productGroup: f.productGroup || f.productGroupCode,
     barcode,
-    barcodeType: (!barcode || barcode.startsWith('20')) ? 'PLU' : undefined,
+    barcodeType: useInstoreCode ? 'PLU' : ((!barcode || barcode.startsWith('20')) ? 'PLU' : undefined),
+    useInstoreCode,
     nameEng: f.nameEng,
     nameTha: f.nameTha,
     sizeEng: f.sizeEng || DEFAULT_SPEC_ENG,
@@ -1007,6 +1046,10 @@ function resetForm(preserveSupplier = false) {
   el.supplierCode.value = keepSupplierCode;
   el.supplier.value = keepSupplierDisplay;
   if (el.pluNo) el.pluNo.value = '';
+  if (el.useInstoreCode) {
+    el.useInstoreCode.checked = false;
+    applyInstoreCodeVisibility();
+  }
   editingIndex = -1;
   el.btnAdd.textContent = t('btn.add');
   toggleCaseFields(Number(el.salesQty.value) >= 2);
@@ -1572,14 +1615,19 @@ const GRID_COL_FIELDS = [
 
 function renderTable() {
   const isRawMaterial = isRawMaterialLike(selectedProductType);
+  const admin = isAdminUser();
   el.tbody.innerHTML = '';
   items.forEach((item, i) => {
+    // インストアコード登録行は admin のみ編集可。non-admin は read-only でクリック無効。
+    const readOnly = !!item.useInstoreCode && !admin;
     const tr = document.createElement('tr');
     tr.dataset.index = i;
     tr.classList.toggle('selected', i === editingIndex);
-    tr.style.cursor = 'pointer';
+    if (readOnly) tr.classList.add('row-readonly');
+    tr.style.cursor = readOnly ? 'default' : 'pointer';
     tr.addEventListener('click', (e) => {
       if (e.target.closest('button')) return;
+      if (readOnly) return;
       startEditRow(i);
     });
 
@@ -1614,7 +1662,8 @@ function renderTable() {
       : '';
 
     const cols = [
-      { cls: 'cell-barcode', val: item.barcode || '' },
+      // インストアコード行は barcode 列に「インストア」表示（識別用）
+      { cls: 'cell-barcode', val: item.useInstoreCode ? `(${t('label.useInstoreCodeShort')})` : (item.barcode || '') },
       { cls: 'cell-name', val: item.nameEng || '', truncate: 50 },
       { cls: 'cell-name', val: item.nameTha || '', truncate: 50 },
       { cls: groupCodeValid ? '' : 'cell-invalid', val: groupLabel, title: groupCodeValid ? '' : t('error.groupCodeNotFound'), truncate: 40 },
@@ -1637,14 +1686,15 @@ function renderTable() {
       tr.appendChild(td);
     });
 
-    // 操作列：行コピーボタン
+    // 操作列：行コピーボタン（read-only 行は非 admin にコピーさせない）
     const tdAction = document.createElement('td');
     tdAction.className = 'col-action';
     const btnCopy = document.createElement('button');
     btnCopy.type = 'button';
     btnCopy.textContent = t('btn.copy');
     btnCopy.className = 'btn-row-copy';
-    btnCopy.addEventListener('click', () => copyRow(i));
+    btnCopy.disabled = readOnly;
+    if (!readOnly) btnCopy.addEventListener('click', () => copyRow(i));
     tdAction.appendChild(btnCopy);
     tr.appendChild(tdAction);
 
@@ -1854,6 +1904,10 @@ function fillForm(item) {
   el.productGroupCode.value = item.productGroupCode || '';
   el.productGroup.value = (item.productGroup || item.productGroupCode) || '';
   el.barcode.value = item.barcode || '';
+  if (el.useInstoreCode) {
+    el.useInstoreCode.checked = !!item.useInstoreCode && isAdminUser();
+    applyInstoreCodeVisibility();
+  }
   el.nameEng.value = item.nameEng || '';
   el.nameTha.value = item.nameTha || '';
   el.sizeEng.value = item.sizeEng || DEFAULT_SPEC_ENG;

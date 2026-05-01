@@ -49,10 +49,14 @@ const ITEM_MANAGED_INDICES = [0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
 function itemToRow(item, departmentCode, options = {}) {
   const { productType = 'manufacturer' } = options;
   const vat = String(item.taxRate) === '7' ? TAX_VAT07 : TAX_ZERO;
-  const barcode = item.barcode != null ? String(item.barcode).trim() : '';
-  const barcodeType = item.barcodeType
-    ? String(item.barcodeType)
-    : (!barcode || barcode.startsWith('20') ? 'PLU' : ITEM_FIXED.barcodeType);
+  // インストアコード登録は強制的に barcode 空・barcodeType=PLU で出力する
+  const useInstoreCode = Boolean(item.useInstoreCode);
+  const barcode = useInstoreCode ? '' : (item.barcode != null ? String(item.barcode).trim() : '');
+  const barcodeType = useInstoreCode
+    ? 'PLU'
+    : (item.barcodeType
+        ? String(item.barcodeType)
+        : (!barcode || barcode.startsWith('20') ? 'PLU' : ITEM_FIXED.barcodeType));
   const isRawLike = productType === 'rawMaterial' || productType === 'consumables';
   const postingGroup = productType === 'rawMaterial'
     ? 'MATERIAL'
@@ -75,7 +79,7 @@ function itemToRow(item, departmentCode, options = {}) {
     departmentCode,
     item.productGroupCode || '',
     barcodeType,
-    item.barcode || '',
+    barcode, // 3: Barcode No. — useInstoreCode のときは強制的に空
     null, // 4: Item No. は上書きしない（下で _raw から維持）
     item.nameEng || '',
     item.nameTha || '',
@@ -395,9 +399,12 @@ export function parseItemSheet(buffer) {
     const row = data[i];
     const get = (col) => (col != null && row[col] != null ? String(row[col]).trim() : '');
     const getNum = (col) => (col != null && row[col] !== '' ? Number(row[col]) : undefined);
-    if (!get(barcodeCol)) continue;
     const barcode = get(barcodeCol);
     const importedBarcodeType = get(barcodeTypeCol);
+    // Barcode No. が空の行は通常スキップする。例外: Barcode Type が PLU の場合は
+    // admin が登録したインストアコード行とみなして取り込む（read-only 扱いは UI 側で行う）
+    const isInstoreCodeRow = !barcode && importedBarcodeType === 'PLU';
+    if (!barcode && !isInstoreCodeRow) continue;
     const rawRow = ITEM_HEADERS.map((h) => {
       const col = map[h];
       return col != null && row[col] !== undefined && row[col] !== null ? row[col] : '';
@@ -408,7 +415,8 @@ export function parseItemSheet(buffer) {
       productGroupCode: get(groupCol),
       productGroup: get(groupCol),
       barcode,
-      barcodeType: barcode.startsWith('20') ? 'PLU' : importedBarcodeType,
+      barcodeType: isInstoreCodeRow ? 'PLU' : (barcode.startsWith('20') ? 'PLU' : importedBarcodeType),
+      useInstoreCode: isInstoreCodeRow,
       itemNo: get(itemNoCol),
       pluNo: pluByBarcode[barcode] ?? '',
       nameEng: get(nameEngCol),

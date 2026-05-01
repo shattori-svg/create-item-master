@@ -30,7 +30,9 @@
     "brandEng": "แบรนด์ (อังกฤษ)",
     "brandTha": "แบรนด์ (ไทย)",
     "outputFilename": "ชื่อไฟล์",
-    "grossMargin": "กำไรขั้นต้น"
+    "grossMargin": "กำไรขั้นต้น",
+    "useInstoreCode": "ลงทะเบียนด้วยรหัสในร้าน (เฉพาะผู้ดูแล)",
+    "useInstoreCodeShort": "ในร้าน"
   },
   "option": {
     "manufacturingLocationInstore": "ร้านค้า",

@@ -30,7 +30,9 @@
     "brandEng": "ブランド（英語）",
     "brandTha": "ブランド（タイ）",
     "outputFilename": "ファイル名",
-    "grossMargin": "粗利"
+    "grossMargin": "粗利",
+    "useInstoreCode": "インストアコードで登録（管理者のみ）",
+    "useInstoreCodeShort": "インストア"
   },
   "option": {
     "manufacturingLocationInstore": "店舗",

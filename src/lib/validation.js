@@ -90,9 +90,13 @@ export function validateFormFields(fields, existingBarcodes = [], productType = 
     return errors;
   }
 
-  const barcodeResult = validateBarcode(fields.barcode);
-  if (!barcodeResult.ok) errors.barcode = barcodeResult.key;
-  else if (existingBarcodes.includes(String(fields.barcode).trim())) errors.barcode = 'barcodeDuplicate';
+  // インストアコード登録（admin限定）はバーコード未入力＋PLU扱いでメーカーバーコード販売区分に登録する。
+  // バーコード必須・GS-1 形式・重複チェックをすべてスキップする（重複は仕様上許容）。
+  if (!fields.useInstoreCode) {
+    const barcodeResult = validateBarcode(fields.barcode);
+    if (!barcodeResult.ok) errors.barcode = barcodeResult.key;
+    else if (existingBarcodes.includes(String(fields.barcode).trim())) errors.barcode = 'barcodeDuplicate';
+  }
 
   if (!validateRequired(fields.productGroupCode || fields.productGroup).ok) errors.productGroup = 'required';
   if (!validateRequired(fields.nameEng).ok) errors.nameEng = 'required';
@@ -123,8 +127,8 @@ export function validateForExport(items, department, productType = 'manufacturer
   if (!items || items.length === 0) list.push('export.noItems');
   if (!department) list.push('export.noDepartment');
   items?.forEach((it, i) => {
-    // 計量器(Itemのみ)と原材料/消耗品はバーコード未入力可
-    const needBarcode = (productType === 'manufacturer') || (productType === 'scale' && requirePluForScale);
+    // 計量器(Itemのみ)と原材料/消耗品、admin のインストアコード登録行はバーコード未入力可
+    const needBarcode = ((productType === 'manufacturer') || (productType === 'scale' && requirePluForScale)) && !it.useInstoreCode;
     if (needBarcode && !it.barcode) list.push(`#${i + 1} barcode`);
     const classification = it.productGroupCode || it.productGroup || '';
     if (!classification || !String(classification).trim()) list.push(`#${i + 1} classification`);
