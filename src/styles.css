@@ -167,6 +167,8 @@ input.readonly, input[readonly] {
 }
 .form-step-body .form-group { margin-bottom: 0.6rem; }
 .form-check { display: inline-flex; align-items: center; gap: 0.4rem; margin-top: 0.35rem; font-size: 12px; color: #555; cursor: pointer; }
+/* `hidden` 属性の display:none は class の display:inline-flex に負けるので明示的に再上書き */
+.form-check[hidden] { display: none; }
 .form-check input[type="checkbox"] { margin: 0; }
 .form-check--admin { color: #1f6feb; }
 .row-readonly { background: #fafafa; color: #666; }

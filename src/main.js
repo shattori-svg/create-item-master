@@ -282,15 +282,27 @@ function applyAuthStatus(status) {
   if (el.btnAdmin) {
     el.btnAdmin.hidden = !(status.loggedIn && status.role === 'admin');
   }
-  // admin だけ「インストアコードで登録」のチェックボックスを表示する
-  if (el.useInstoreCodeWrap) {
-    el.useInstoreCodeWrap.hidden = !(status.loggedIn && status.role === 'admin');
-  }
-  applyProductTypeVisibility?.();
+  // 認証状態が変わったらインストアコードチェックボックスの可視性も再評価
+  updateInstoreCodeVisibility?.();
 }
 
 function isAdminUser() {
   return Boolean(currentAuthStatus && currentAuthStatus.loggedIn && currentAuthStatus.role === 'admin');
+}
+
+/**
+ * 「インストアコードで登録」チェックボックスは admin かつ商品区分=メーカーバーコード販売 のときだけ表示。
+ * それ以外の場合はチェック状態もクリアして UI 状態を確実に同期する。
+ */
+function updateInstoreCodeVisibility() {
+  if (!el.useInstoreCodeWrap) return;
+  const isManufacturer = selectedProductType === PRODUCT_TYPE_MANUFACTURER;
+  const visible = isAdminUser() && isManufacturer;
+  el.useInstoreCodeWrap.hidden = !visible;
+  if (!visible && el.useInstoreCode && el.useInstoreCode.checked) {
+    el.useInstoreCode.checked = false;
+    applyInstoreCodeVisibility();
+  }
 }
 
 function bindAuth() {
@@ -797,6 +809,7 @@ function applyProductTypeVisibility() {
     el.barcode.classList.toggle('readonly', isScale);
   }
   if (el.outSecondWrap) el.outSecondWrap.hidden = isRawLike;
+  updateInstoreCodeVisibility();
   if (isRawLike && el.outSecond) el.outSecond.checked = false;
   if (el.tableOrderCol) {
     el.tableOrderCol.textContent = isRawLike ? t('table.orderUnit') : t('table.orderQty');
