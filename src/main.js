@@ -1141,8 +1141,10 @@ function updateRequiredFeedback() {
     el.btnAdd.disabled = !allRequiredFilled();
     return;
   }
+  // インストアコード登録（admin限定）はバーコード必須を外す
+  const usingInstoreCode = !!(el.useInstoreCode && el.useInstoreCode.checked);
   const requiredInputs = [
-    { el: el.barcode, filled: () => String(el.barcode?.value || '').trim() !== '' },
+    { el: el.barcode, filled: () => usingInstoreCode || String(el.barcode?.value || '').trim() !== '' },
     { el: el.nameEng, filled: () => String(el.nameEng?.value || '').trim() !== '' },
     { el: el.productGroup, filled: () => String(el.productGroupCode?.value || el.productGroup?.value || '').trim() !== '' },
     { el: el.sizeEng, filled: () => String(el.sizeEng?.value || '').trim() !== '' },
@@ -1189,7 +1191,9 @@ function allRequiredFilled() {
     return true;
   }
   const caseVisible = !el.caseFields.hidden;
-  if (String(el.barcode?.value || '').trim() === '') return false;
+  // インストアコード登録時はバーコード未入力でも OK
+  const usingInstoreCode = !!(el.useInstoreCode && el.useInstoreCode.checked);
+  if (!usingInstoreCode && String(el.barcode?.value || '').trim() === '') return false;
   if (String(el.nameEng?.value || '').trim() === '') return false;
   if (String(el.productGroupCode?.value || el.productGroup?.value || '').trim() === '') return false;
   if (String(el.sizeEng?.value || '').trim() === '') return false;
