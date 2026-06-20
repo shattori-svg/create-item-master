@@ -112,7 +112,16 @@
     "selectFile": "กรุณาเลือกไฟล์",
     "importSuccess": "✓ นำเข้า {n} รายการแล้ว",
     "importError": "ข้อผิดพลาด: ",
-    "selectPlaceholder": "-- กรุณาเลือก --"
+    "selectPlaceholder": "-- กรุณาเลือก --",
+    "syncNow": "ซิงค์ทันที (LS-Central)",
+    "syncGroupSchedule": "อัตโนมัติ: ทุกวัน",
+    "syncSupplierSchedule": "อัตโนมัติ: ทุกชั่วโมง",
+    "syncRunning": "กำลังซิงค์…",
+    "syncSuccess": "✓ ซิงค์ {n} รายการแล้ว",
+    "syncError": "ข้อผิดพลาดในการซิงค์: ",
+    "syncNever": "ยังไม่ได้รัน",
+    "syncLast": "ซิงค์ล่าสุด: {time} ({n} รายการ)",
+    "syncNotConfigured": "ยังไม่ได้ตั้งค่าการเชื่อมต่อ LS-Central"
   },
   "modal": {
     "cancel": "ยกเลิก",

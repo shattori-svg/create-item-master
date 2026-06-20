@@ -112,7 +112,16 @@
     "selectFile": "ファイルを選択してください。",
     "importSuccess": "✓ {n} 件インポートしました",
     "importError": "エラー: ",
-    "selectPlaceholder": "-- 選択してください --"
+    "selectPlaceholder": "-- 選択してください --",
+    "syncNow": "今すぐ同期 (LS-Central)",
+    "syncGroupSchedule": "自動: 毎日",
+    "syncSupplierSchedule": "自動: 毎時",
+    "syncRunning": "同期中…",
+    "syncSuccess": "✓ {n} 件を同期しました",
+    "syncError": "同期エラー: ",
+    "syncNever": "未実行",
+    "syncLast": "最終同期: {time}（{n} 件）",
+    "syncNotConfigured": "LS-Central 接続が未設定です"
   },
   "modal": {
     "cancel": "キャンセル",

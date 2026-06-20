@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import express from 'express';
 import session from 'express-session';
 import multer from 'multer';
@@ -8,6 +9,8 @@ import { createClient } from '@supabase/supabase-js';
 import { Storage } from '@google-cloud/storage';
 import * as XLSX from 'xlsx';
 import * as entraAuth from './entra-auth.js';
+import { isBcConfigured } from './bc-client.js';
+import { runSync, latestSyncStatus, SYNC_TYPES } from './master-sync.js';
 import {
   init as initUsersStore,
   createUserFromEmail,
@@ -96,6 +99,26 @@ function requireAuth(req, res, next) {
 
 function requireAdmin(req, res, next) {
   if (req.session?.loggedIn && req.session?.role === 'admin') return next();
+  return res.status(403).json({ error: 'forbidden' });
+}
+
+function safeEqual(a, b) {
+  const ab = Buffer.from(String(a));
+  const bb = Buffer.from(String(b));
+  if (ab.length !== bb.length) return false;
+  return crypto.timingSafeEqual(ab, bb);
+}
+
+/**
+ * Master-sync trigger auth: an admin session (manual button) OR a shared
+ * X-Sync-Token header (Cloud Scheduler). The token is set via MASTER_SYNC_TOKEN
+ * and injected from Secret Manager in production.
+ */
+function requireAdminOrSyncToken(req, res, next) {
+  if (req.session?.loggedIn && req.session?.role === 'admin') return next();
+  const expected = process.env.MASTER_SYNC_TOKEN || '';
+  const provided = req.get('x-sync-token') || '';
+  if (expected && provided && safeEqual(provided, expected)) return next();
   return res.status(403).json({ error: 'forbidden' });
 }
 
@@ -201,6 +224,10 @@ app.put('/api/me/preferences', requireAuth, async (req, res) => {
 app.use((req, res, next) => {
   const publicPaths = ['/login', '/auth/callback', '/logout', '/healthz', '/config.js'];
   if (publicPaths.includes(req.path)) return next();
+  // Master-sync endpoints carry their own auth (admin session OR X-Sync-Token),
+  // so Cloud Scheduler can call them without a session. The route-level
+  // requireAdminOrSyncToken / requireAdmin still enforces access.
+  if (req.path.startsWith('/api/admin/masters/sync/')) return next();
   return requireAuth(req, res, next);
 });
 
@@ -632,6 +659,42 @@ app.post('/api/masters/stores/import', requireAdmin, upload.single('file'), asyn
     return res.json({ count: unique.length });
   } catch (err) {
     console.error('POST /api/masters/stores/import:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Master Auto-Sync from LS-Central (Business Central) ---
+
+/**
+ * Trigger a master sync from LS-Central. Used by both the admin "sync now"
+ * button (admin session) and Cloud Scheduler (X-Sync-Token header):
+ *   - group    -> Retail_Product_Groups_Excel -> group_master   (scheduled daily)
+ *   - supplier -> Retail_Vendor_Card_Excel    -> supplier_master (scheduled hourly)
+ */
+app.post('/api/admin/masters/sync/:type', requireAdminOrSyncToken, async (req, res) => {
+  if (!supabase) return res.status(503).json({ error: 'Database not configured' });
+  const type = String(req.params.type || '');
+  if (!SYNC_TYPES.includes(type)) return res.status(400).json({ error: 'invalid_type' });
+  if (!isBcConfigured()) return res.status(503).json({ error: 'bc_not_configured' });
+  try {
+    const triggeredBy = req.session?.username || 'scheduler';
+    const dryRun = req.query.dryRun === '1' || req.query.dryRun === 'true';
+    const result = await runSync(type, supabase, { triggeredBy, dryRun });
+    return res.json(result);
+  } catch (err) {
+    console.error(`POST /api/admin/masters/sync/${type}:`, err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/** Latest sync result per master type, for the admin UI. */
+app.get('/api/admin/masters/sync/status', requireAdmin, async (_req, res) => {
+  if (!supabase) return res.status(503).json({ error: 'Database not configured' });
+  try {
+    const status = await latestSyncStatus(supabase);
+    return res.json({ bcConfigured: isBcConfigured(), status });
+  } catch (err) {
+    console.error('GET /api/admin/masters/sync/status:', err.message);
     return res.status(500).json({ error: err.message });
   }
 });

@@ -345,6 +345,11 @@
               <a id="btn-group-export" href="/api/masters/groups/export" class="btn-admin-save" data-i18n="admin.download" style="text-decoration:none">ダウンロード</a>
             </div>
             <p id="group-import-status" class="master-import-status" hidden></p>
+            <div class="master-import-row">
+              <button type="button" id="btn-group-sync" class="btn-admin-save" data-i18n="admin.syncNow">今すぐ同期 (LS-Central)</button>
+              <span class="master-import-desc" data-i18n="admin.syncGroupSchedule">自動: 毎日</span>
+            </div>
+            <p id="group-sync-status" class="master-import-status" hidden></p>
           </div>
           <div class="master-import-card">
             <h4 class="master-import-title">仕入先マスタ（supplier_master）</h4>
@@ -355,6 +360,11 @@
               <a id="btn-supplier-export" href="/api/masters/suppliers/export" class="btn-admin-save" data-i18n="admin.download" style="text-decoration:none">ダウンロード</a>
             </div>
             <p id="supplier-import-status" class="master-import-status" hidden></p>
+            <div class="master-import-row">
+              <button type="button" id="btn-supplier-sync" class="btn-admin-save" data-i18n="admin.syncNow">今すぐ同期 (LS-Central)</button>
+              <span class="master-import-desc" data-i18n="admin.syncSupplierSchedule">自動: 毎時</span>
+            </div>
+            <p id="supplier-sync-status" class="master-import-status" hidden></p>
           </div>
         </div>
       </div>

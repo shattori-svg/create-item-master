@@ -2,6 +2,7 @@ node_modules/
 dist/
 .env
 .env.local
+.bc-refresh-token
 *.log
 .DS_Store
 

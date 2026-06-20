@@ -159,6 +159,10 @@ const el = {
   inputSupplierFile: document.getElementById('input-supplier-file'),
   btnSupplierImport: document.getElementById('btn-supplier-import'),
   supplierImportStatus: document.getElementById('supplier-import-status'),
+  btnGroupSync: document.getElementById('btn-group-sync'),
+  groupSyncStatus: document.getElementById('group-sync-status'),
+  btnSupplierSync: document.getElementById('btn-supplier-sync'),
+  supplierSyncStatus: document.getElementById('supplier-sync-status'),
   btnSuggestClassification: document.getElementById('btn-suggest-classification'),
   suggestSourceMsg: document.getElementById('suggest-source-msg'),
   numpad: document.getElementById('numpad'),
@@ -333,6 +337,7 @@ function bindAuth() {
       if (el.adminTabMasters) el.adminTabMasters.hidden = target !== 'masters';
       if (el.adminTabLogs) el.adminTabLogs.hidden = target !== 'logs';
       if (target === 'logs') fetchAdminLogs();
+      if (target === 'masters') loadSyncStatus();
     });
   });
   bindAdminLogsFilter();
@@ -350,6 +355,13 @@ function bindAuth() {
   }
   if (el.btnSupplierImport) {
     el.btnSupplierImport.addEventListener('click', () => importMasterFile('suppliers'));
+  }
+  // LS-Central 手動同期ボタン
+  if (el.btnGroupSync) {
+    el.btnGroupSync.addEventListener('click', () => syncMaster('group'));
+  }
+  if (el.btnSupplierSync) {
+    el.btnSupplierSync.addEventListener('click', () => syncMaster('supplier'));
   }
   // Undo/Redo ボタン + キーボードショートカット
   if (el.btnUndo) el.btnUndo.addEventListener('click', undo);
@@ -650,6 +662,82 @@ async function importMasterFile(type) {
   } finally {
     btn.disabled = false;
     btn.textContent = t('admin.import');
+  }
+}
+
+/**
+ * Trigger an on-demand master sync from LS-Central (group or supplier).
+ * Mirrors importMasterFile's status-display pattern.
+ */
+async function syncMaster(type) {
+  const isGroup = type === 'group';
+  const btn = isGroup ? el.btnGroupSync : el.btnSupplierSync;
+  const statusEl = isGroup ? el.groupSyncStatus : el.supplierSyncStatus;
+  if (!btn) return;
+
+  btn.disabled = true;
+  btn.textContent = t('admin.syncRunning');
+  if (statusEl) { statusEl.hidden = true; statusEl.className = 'master-import-status'; }
+
+  try {
+    const res = await fetch(`/api/admin/masters/sync/${type}`, {
+      method: 'POST',
+      credentials: 'include',
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error || res.status);
+    if (statusEl) {
+      statusEl.textContent = t('admin.syncSuccess').replace('{n}', body.upserted);
+      statusEl.className = 'master-import-status master-import-status--ok';
+      statusEl.hidden = false;
+    }
+    // 同期後はキャッシュを破棄して再取得し、最終同期時刻を更新
+    clearMastersCache();
+    await loadMastersFromApi();
+    loadSyncStatus();
+  } catch (err) {
+    if (statusEl) {
+      statusEl.textContent = t('admin.syncError') + err.message;
+      statusEl.className = 'master-import-status master-import-status--err';
+      statusEl.hidden = false;
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = t('admin.syncNow');
+  }
+}
+
+/** マスタタブを開いたとき、各マスタの最終同期状況を表示する。 */
+async function loadSyncStatus() {
+  const targets = { group: el.groupSyncStatus, supplier: el.supplierSyncStatus };
+  try {
+    const res = await fetch('/api/admin/masters/sync/status', { credentials: 'include' });
+    if (!res.ok) return;
+    const body = await res.json();
+    if (!body.bcConfigured) {
+      Object.values(targets).forEach((s) => {
+        if (!s) return;
+        s.textContent = t('admin.syncNotConfigured');
+        s.className = 'master-import-status master-import-status--err';
+        s.hidden = false;
+      });
+      return;
+    }
+    Object.entries(targets).forEach(([type, s]) => {
+      if (!s) return;
+      const info = body.status && body.status[type];
+      if (info && info.created_at) {
+        const dt = new Date(info.created_at).toLocaleString();
+        s.textContent = t('admin.syncLast').replace('{time}', dt).replace('{n}', info.item_count ?? 0);
+        s.className = 'master-import-status master-import-status--ok';
+      } else {
+        s.textContent = t('admin.syncNever');
+        s.className = 'master-import-status';
+      }
+      s.hidden = false;
+    });
+  } catch {
+    // 状況表示は補助情報なので失敗は無視
   }
 }
 
