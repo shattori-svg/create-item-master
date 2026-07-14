@@ -211,8 +211,8 @@ async function init() {
     if (pt) opt.textContent = lang === 'ja' ? (pt.nameJa ?? pt.nameTh) : (pt.nameTh ?? pt.nameJa);
   });
 }
-  document.getElementById('btn-lang-ja').addEventListener('click', () => { setLanguage('ja'); refreshDepartmentOptions(); refreshProductTypeOptions(); applyProductTypeVisibility(); renderTable(); updateGrossMargin(); document.querySelectorAll('.lang-btn').forEach((b) => b.classList.remove('active')); document.getElementById('btn-lang-ja').classList.add('active'); });
-  document.getElementById('btn-lang-th').addEventListener('click', () => { setLanguage('th'); refreshDepartmentOptions(); refreshProductTypeOptions(); applyProductTypeVisibility(); renderTable(); updateGrossMargin(); document.querySelectorAll('.lang-btn').forEach((b) => b.classList.remove('active')); document.getElementById('btn-lang-th').classList.add('active'); });
+  document.getElementById('btn-lang-ja').addEventListener('click', () => { setLanguage('ja'); refreshDepartmentOptions(); refreshProductTypeOptions(); applyProductTypeVisibility(); renderTable(); updateGrossMargin(); populateAdminLogsDeptOptions(); document.querySelectorAll('.lang-btn').forEach((b) => b.classList.remove('active')); document.getElementById('btn-lang-ja').classList.add('active'); });
+  document.getElementById('btn-lang-th').addEventListener('click', () => { setLanguage('th'); refreshDepartmentOptions(); refreshProductTypeOptions(); applyProductTypeVisibility(); renderTable(); updateGrossMargin(); populateAdminLogsDeptOptions(); document.querySelectorAll('.lang-btn').forEach((b) => b.classList.remove('active')); document.getElementById('btn-lang-th').classList.add('active'); });
 
   fillDepartmentSelect();
   await loadMastersFromApi();
@@ -500,89 +500,91 @@ async function saveUserAdmin(tr, userId) {
 // 保管期間 90日。created_at から 90日経過した行はオブジェクトが既に削除されている可能性が高い
 const LOG_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 let allAdminLogs = [];
+let adminLogsTruncated = false;
+let adminLogsFetchSeq = 0;
+let adminLogsDebounce = null;
+
+/** 現在のフィルタ入力から、サーバーへ渡すクエリ文字列を組み立てる。
+ *  date input は 'YYYY-MM-DD'（ローカル日付）。ローカルの 00:00〜23:59 を
+ *  ISO(UTC) に変換して送り、サーバーで created_at と比較させる。 */
+function buildAdminLogsQuery() {
+  const params = new URLSearchParams();
+  const q = (el.adminLogsQ?.value || '').trim();
+  const dept = el.adminLogsDept?.value || '';
+  const from = el.adminLogsDateFrom?.value || '';
+  const to = el.adminLogsDateTo?.value || '';
+  if (q) params.set('q', q);
+  if (dept) params.set('dept', dept);
+  if (from) params.set('from', new Date(`${from}T00:00:00`).toISOString());
+  if (to) params.set('to', new Date(`${to}T23:59:59.999`).toISOString());
+  const s = params.toString();
+  return s ? `?${s}` : '';
+}
+
+function hasActiveAdminLogsFilter() {
+  return !!(
+    (el.adminLogsQ?.value || '').trim() ||
+    (el.adminLogsDept?.value || '') ||
+    (el.adminLogsDateFrom?.value || '') ||
+    (el.adminLogsDateTo?.value || '')
+  );
+}
 
 async function fetchAdminLogs() {
   if (!el.adminLogsContent) return;
+  const seq = ++adminLogsFetchSeq;
   el.adminLogsContent.innerHTML = `<p>${t('admin.loading')}</p>`;
   try {
-    const res = await fetch('/api/admin/logs', { credentials: 'include' });
+    const res = await fetch(`/api/admin/logs${buildAdminLogsQuery()}`, { credentials: 'include' });
     if (!res.ok) throw new Error(`${res.status}`);
-    allAdminLogs = await res.json();
-    populateAdminLogsDeptOptions();
-    if (el.adminLogsFilter) el.adminLogsFilter.hidden = allAdminLogs.length === 0;
+    const body = await res.json();
+    if (seq !== adminLogsFetchSeq) return; // 古いリクエストの結果は破棄（フィルタ連打対策）
+    // 後方互換: 旧APIは配列を返していた
+    allAdminLogs = Array.isArray(body) ? body : (body.logs || []);
+    adminLogsTruncated = !Array.isArray(body) && !!body.truncated;
+    if (el.adminLogsFilter) el.adminLogsFilter.hidden = false;
     renderAdminLogs();
   } catch (err) {
+    if (seq !== adminLogsFetchSeq) return;
     if (el.adminLogsFilter) el.adminLogsFilter.hidden = true;
     el.adminLogsContent.innerHTML = `<p class="admin-logs-error">${t('admin.loadFailed')}${escapeHtml(err.message)}</p>`;
   }
 }
 
-/** dept セレクトに、ログに登場する部門コードを populate（重複なし、昇順） */
+/** dept セレクトを部門マスタ（静的）から構築。サーバー側フィルタなので、
+ *  取得済みログの内容に依存せず全部門を選択肢に出す。 */
 function populateAdminLogsDeptOptions() {
   if (!el.adminLogsDept) return;
   const current = el.adminLogsDept.value;
-  const depts = [...new Set(allAdminLogs.map((l) => l.dept).filter(Boolean))].sort();
   // 先頭の「全部門」option は残し、それ以降を作り直す
   while (el.adminLogsDept.options.length > 1) el.adminLogsDept.remove(1);
-  for (const d of depts) {
+  const th = getLang() === 'th';
+  for (const d of DEPARTMENTS) {
     const opt = document.createElement('option');
-    opt.value = d;
-    opt.textContent = d;
+    opt.value = d.code;
+    opt.textContent = `${d.code} ${th ? d.nameTh : d.nameJa}`;
     el.adminLogsDept.appendChild(opt);
   }
   el.adminLogsDept.value = current;
 }
 
-function getAdminLogsFilter() {
-  return {
-    q: (el.adminLogsQ?.value || '').trim().toLowerCase(),
-    dept: el.adminLogsDept?.value || '',
-    from: el.adminLogsDateFrom?.value || '',
-    to: el.adminLogsDateTo?.value || '',
-  };
-}
-
-function applyAdminLogsFilter(logs, f) {
-  // date input の値は 'YYYY-MM-DD' (ローカル日付)。created_at は ISO UTC。
-  // ローカル時刻換算で from 00:00 ～ to 23:59:59 の範囲にする。
-  const fromMs = f.from ? new Date(f.from + 'T00:00:00').getTime() : null;
-  const toMs = f.to ? new Date(f.to + 'T23:59:59.999').getTime() : null;
-  return logs.filter((log) => {
-    if (f.dept && log.dept !== f.dept) return false;
-    if (fromMs != null || toMs != null) {
-      const t = new Date(log.created_at).getTime();
-      if (fromMs != null && t < fromMs) return false;
-      if (toMs != null && t > toMs) return false;
-    }
-    if (f.q) {
-      const hay = `${log.user_display_name || ''} ${log.username || ''} ${log.filename || ''}`.toLowerCase();
-      if (!hay.includes(f.q)) return false;
-    }
-    return true;
-  });
-}
-
 function renderAdminLogs() {
   if (!el.adminLogsContent) return;
-  if (allAdminLogs.length === 0) {
-    el.adminLogsContent.innerHTML = `<p>${t('admin.noLogs')}</p>`;
-    if (el.adminLogsSummary) el.adminLogsSummary.textContent = '';
-    return;
-  }
-  const filter = getAdminLogsFilter();
-  const filtered = applyAdminLogsFilter(allAdminLogs, filter);
   if (el.adminLogsSummary) {
-    el.adminLogsSummary.textContent = t('log.filterSummary')
-      .replace('{shown}', String(filtered.length))
-      .replace('{total}', String(allAdminLogs.length));
+    let summary = t('log.filterSummary').replace('{shown}', String(allAdminLogs.length));
+    if (adminLogsTruncated) {
+      summary += ` ${t('log.filterTruncated').replace('{limit}', String(allAdminLogs.length))}`;
+    }
+    el.adminLogsSummary.textContent = summary;
   }
-  if (filtered.length === 0) {
-    el.adminLogsContent.innerHTML = `<p style="text-align:center;color:#888">${t('log.filterNoMatch')}</p>`;
+  if (allAdminLogs.length === 0) {
+    const msg = hasActiveAdminLogsFilter() ? t('log.filterNoMatch') : t('admin.noLogs');
+    el.adminLogsContent.innerHTML = `<p style="text-align:center;color:#888">${msg}</p>`;
     return;
   }
   const locale = getLang() === 'ja' ? 'ja-JP' : 'th-TH';
   const now = Date.now();
-  const rows = filtered.map((log) => {
+  const rows = allAdminLogs.map((log) => {
     const date = new Date(log.created_at).toLocaleString(locale);
     const user = escapeHtml(log.user_display_name || log.username || '—');
     const dept = escapeHtml(log.dept || '—');
@@ -602,18 +604,24 @@ function renderAdminLogs() {
 }
 
 function bindAdminLogsFilter() {
-  const onChange = () => renderAdminLogs();
-  if (el.adminLogsQ) el.adminLogsQ.addEventListener('input', onChange);
-  if (el.adminLogsDept) el.adminLogsDept.addEventListener('change', onChange);
-  if (el.adminLogsDateFrom) el.adminLogsDateFrom.addEventListener('change', onChange);
-  if (el.adminLogsDateTo) el.adminLogsDateTo.addEventListener('change', onChange);
+  populateAdminLogsDeptOptions();
+  // フィルタはサーバー側で適用するため、変更のたびに再取得する。
+  // テキスト入力は打鍵ごとの再取得を避けてデバウンスする。
+  const refetchDebounced = () => {
+    if (adminLogsDebounce) clearTimeout(adminLogsDebounce);
+    adminLogsDebounce = setTimeout(() => { fetchAdminLogs(); }, 300);
+  };
+  if (el.adminLogsQ) el.adminLogsQ.addEventListener('input', refetchDebounced);
+  if (el.adminLogsDept) el.adminLogsDept.addEventListener('change', fetchAdminLogs);
+  if (el.adminLogsDateFrom) el.adminLogsDateFrom.addEventListener('change', fetchAdminLogs);
+  if (el.adminLogsDateTo) el.adminLogsDateTo.addEventListener('change', fetchAdminLogs);
   if (el.adminLogsClear) {
     el.adminLogsClear.addEventListener('click', () => {
       if (el.adminLogsQ) el.adminLogsQ.value = '';
       if (el.adminLogsDept) el.adminLogsDept.value = '';
       if (el.adminLogsDateFrom) el.adminLogsDateFrom.value = '';
       if (el.adminLogsDateTo) el.adminLogsDateTo.value = '';
-      renderAdminLogs();
+      fetchAdminLogs();
     });
   }
 }

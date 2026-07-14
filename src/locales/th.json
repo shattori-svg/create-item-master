@@ -180,7 +180,8 @@
     "filterDateFrom": "วันที่เริ่มต้น",
     "filterDateTo": "วันที่สิ้นสุด",
     "filterClear": "ล้าง",
-    "filterSummary": "{shown} / {total} รายการ",
+    "filterSummary": "{shown} รายการ",
+    "filterTruncated": "(แสดงสูงสุด {limit} รายการ กรุณากรองด้วยวันที่หรือแผนก)",
     "filterNoMatch": "ไม่พบบันทึกที่ตรงกัน"
   },
   "help": {

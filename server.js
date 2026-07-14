@@ -511,16 +511,51 @@ app.post('/api/log/export', requireAuth, upload.single('file'), async (req, res)
   return res.json({ ok: true, logId });
 });
 
+// PostgREST caps a single response at 1000 rows by default, so filtering is
+// pushed down to the DB (dept / date range / free text) instead of returning
+// only the newest N rows and filtering in the browser. This lets a date/dept
+// filter reach arbitrarily old records while staying under the row cap.
+const ADMIN_LOGS_LIMIT = 1000;
+
 app.get('/api/admin/logs', requireAdmin, async (req, res) => {
   if (!supabase) return res.status(503).json({ error: 'Database not configured' });
   try {
-    const { data, error } = await supabase
+    let query = supabase
       .from('operation_log')
       .select('id, created_at, username, user_display_name, action, dept, item_count, filename, storage_path')
       .order('created_at', { ascending: false })
-      .limit(200);
+      .limit(ADMIN_LOGS_LIMIT);
+
+    const dept = String(req.query.dept || '').trim();
+    if (dept) query = query.eq('dept', dept);
+
+    // `from`/`to` are ISO timestamps computed client-side from local-date inputs
+    // so the range keeps the user's local-day boundaries.
+    const from = String(req.query.from || '').trim();
+    const to = String(req.query.to || '').trim();
+    if (from) query = query.gte('created_at', from);
+    if (to) query = query.lte('created_at', to);
+
+    // Free-text search over user + filename. Strip PostgREST or() structural
+    // chars so the filter string can't break; ILIKE wildcards (`%`/`_`) are left
+    // as-is (harmless, and `_` still matches literal underscores in filenames).
+    const rawQ = String(req.query.q || '').trim().slice(0, 100);
+    const safeQ = rawQ.replace(/[,()"\\]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (safeQ) {
+      const pat = `%${safeQ}%`;
+      query = query.or(
+        `username.ilike.${pat},user_display_name.ilike.${pat},filename.ilike.${pat}`,
+      );
+    }
+
+    const { data, error } = await query;
     if (error) throw error;
-    return res.json(data || []);
+    const logs = data || [];
+    return res.json({
+      logs,
+      limit: ADMIN_LOGS_LIMIT,
+      truncated: logs.length >= ADMIN_LOGS_LIMIT,
+    });
   } catch (err) {
     console.error('GET /api/admin/logs:', err);
     return res.status(500).json({ error: err.message });

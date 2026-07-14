@@ -180,7 +180,8 @@
     "filterDateFrom": "開始日",
     "filterDateTo": "終了日",
     "filterClear": "クリア",
-    "filterSummary": "{shown} / {total} 件",
+    "filterSummary": "{shown} 件",
+    "filterTruncated": "（上限{limit}件まで表示中。日付や部門で絞り込んでください）",
     "filterNoMatch": "該当するログがありません"
   },
   "help": {
