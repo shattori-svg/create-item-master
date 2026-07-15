@@ -57,7 +57,7 @@ npm run start
 任意:
 
 - `ENTRA_TENANT_GUID`
-- `ENTRA_ALLOWED_DOMAIN`
+- `ENTRA_ALLOWED_DOMAIN`（カンマ区切りで複数ドメイン可。例: `g.oic-sys.net,oic-g.com`。空なら全許可）
 - `USERS_FILE`（既定: `data/users.json`）
 - `PORT`（既定: `8080`）
 

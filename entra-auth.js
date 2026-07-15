@@ -2,7 +2,11 @@ import crypto from 'node:crypto';
 import { importJWK, jwtVerify } from 'jose';
 
 const STATE_TTL_MS = 10 * 60 * 1000;
-const ALLOWED_DOMAIN = (process.env.ENTRA_ALLOWED_DOMAIN || '').trim().toLowerCase();
+// Comma/space-separated list of allowed email domains. Empty = allow any.
+const ALLOWED_DOMAINS = (process.env.ENTRA_ALLOWED_DOMAIN || '')
+  .split(/[,\s]+/)
+  .map((d) => d.trim().toLowerCase())
+  .filter(Boolean);
 
 function requiredEnv(name) {
   const v = process.env[name];
@@ -150,7 +154,7 @@ export function getEmailFromPayload(payload) {
 
 export function isAllowedEmail(email) {
   if (!email) return false;
-  if (!ALLOWED_DOMAIN) return true;
+  if (ALLOWED_DOMAINS.length === 0) return true;
   const domain = email.split('@')[1]?.toLowerCase() || '';
-  return domain === ALLOWED_DOMAIN;
+  return ALLOWED_DOMAINS.includes(domain);
 }
