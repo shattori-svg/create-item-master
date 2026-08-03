@@ -14,10 +14,12 @@ import { runSync, latestSyncStatus, SYNC_TYPES } from './master-sync.js';
 import {
   init as initUsersStore,
   createUserFromEmail,
-  findUserByUsername,
+  findUserByAnyUsername,
+  findUserByEntraOid,
   listUsers,
   updateUserPreferences,
   updateUserByAdmin,
+  updateUserIdentity,
 } from './users-store.js';
 
 // --- Supabase client (service role for server-side writes) ---
@@ -166,12 +168,31 @@ app.get('/auth/callback', async (req, res) => {
 
     const tokenResponse = await entraAuth.exchangeCodeForTokens(code);
     const payload = await entraAuth.validateIdToken(tokenResponse.id_token);
-    const email = entraAuth.getEmailFromPayload(payload);
-    if (!email) return res.status(401).send('Email claim is missing');
-    if (!entraAuth.isAllowedEmail(email)) return res.status(403).send('This account is not allowed');
+    const identity = entraAuth.getIdentityFromPayload(payload);
+    if (!identity.loginId) return res.status(401).send('Email claim is missing');
+    if (!entraAuth.isAllowedIdentity(identity.candidates)) return res.status(403).send('This account is not allowed');
 
-    let user = await findUserByUsername(email);
-    if (!user) user = await createUserFromEmail(email);
+    // Match on the immutable Entra object id first. Editing a user's mail or UPN
+    // in Entra changes every email-like claim, so matching on those alone used to
+    // create a second user_master row (losing role / allowed_departments).
+    // The username fallback re-links rows created before entra_oid existed and
+    // backfills the oid so the next login matches directly.
+    let user = await findUserByEntraOid(identity.oid);
+    if (!user) user = await findUserByAnyUsername(identity.candidates);
+    if (!user) {
+      user = await createUserFromEmail(identity.loginId, {
+        entraOid: identity.oid,
+        displayName: identity.displayName,
+      });
+    } else {
+      const patch = {};
+      if (identity.oid && user.entra_oid !== identity.oid) patch.entraOid = identity.oid;
+      if (identity.loginId && user.username !== identity.loginId) patch.username = identity.loginId;
+      // display_name is user-editable in the profile dialog; only seed it when empty.
+      if (!user.display_name && identity.displayName) patch.displayName = identity.displayName;
+      if (Object.keys(patch).length > 0) user = (await updateUserIdentity(user.id, patch)) || user;
+    }
+    console.log(`[auth] login user_id=${user.id} login_id=${user.username} oid=${identity.oid || 'none'} claims=${identity.candidates.join(',')}`);
 
     req.session.loggedIn = true;
     req.session.userId = user.id;

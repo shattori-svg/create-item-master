@@ -152,9 +152,54 @@ export function getEmailFromPayload(payload) {
   return String(email).trim().toLowerCase();
 }
 
+/**
+ * Extract the stable identity plus every email-like claim from an ID token.
+ *
+ * `oid` (Entra object id) is immutable for a user inside the tenant, while
+ * `email` / `preferred_username` / `upn` all change when the mail attribute or
+ * UPN is edited in Entra. Account matching must therefore key on `oid`;
+ * the email-like claims are only used as a display/login label and as a
+ * fallback for rows created before `oid` was persisted.
+ *
+ * `candidates` lists every distinct email-like claim so a legacy row can still
+ * be matched (and re-linked) when only one of them changed.
+ */
+export function getIdentityFromPayload(payload) {
+  const norm = (v) => String(v ?? '').trim().toLowerCase();
+  if (!payload) {
+    return { oid: '', loginId: '', email: '', preferredUsername: '', upn: '', displayName: '', candidates: [] };
+  }
+  const email = norm(payload.email);
+  const preferredUsername = norm(payload.preferred_username);
+  const upn = norm(payload.upn);
+  const candidates = [...new Set([email, preferredUsername, upn])].filter((v) => v.includes('@'));
+  return {
+    // `sub` is only pairwise-unique per app, but it is still immutable and is a
+    // better key than any email claim when `oid` is absent from the token.
+    oid: String(payload.oid || payload.sub || '').trim(),
+    loginId: email || preferredUsername || upn,
+    email,
+    preferredUsername,
+    upn,
+    displayName: String(payload.name ?? '').trim(),
+    candidates,
+  };
+}
+
 export function isAllowedEmail(email) {
   if (!email) return false;
   if (ALLOWED_DOMAINS.length === 0) return true;
   const domain = email.split('@')[1]?.toLowerCase() || '';
   return ALLOWED_DOMAINS.includes(domain);
+}
+
+/**
+ * Allow the login when *any* email-like claim sits on an allowed domain.
+ * Entra can hand out a `mail` on the tenant's `*.onmicrosoft.com` domain while
+ * the UPN uses the corporate domain (or vice versa); both identify the same
+ * person, so checking only one claim would lock the user out.
+ */
+export function isAllowedIdentity(candidates = []) {
+  if (ALLOWED_DOMAINS.length === 0) return true;
+  return candidates.some((c) => isAllowedEmail(c));
 }

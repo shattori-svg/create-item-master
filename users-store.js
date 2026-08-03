@@ -40,6 +40,24 @@ function writeStore(data) {
 
 // --- Supabase 実装 ---
 
+// Set when Postgres reports "column entra_oid does not exist" (SQLSTATE 42703),
+// i.e. docs/db/002_add_entra_oid_to_user_master.sql has not been applied yet.
+// The store then keeps working in username-matching mode instead of failing
+// every login, so a deploy that lands before the migration does not lock users out.
+let entraOidColumnMissing = false;
+
+function isMissingEntraOidColumn(error) {
+  if (!error) return false;
+  return error.code === '42703' || /entra_oid/.test(error.message || '');
+}
+
+function markEntraOidColumnMissing() {
+  if (!entraOidColumnMissing) {
+    entraOidColumnMissing = true;
+    console.warn('[users-store] user_master.entra_oid is missing — falling back to username matching. Apply docs/db/002_add_entra_oid_to_user_master.sql.');
+  }
+}
+
 async function sbFindByUsername(username) {
   const { data, error } = await supabase
     .from('user_master')
@@ -47,6 +65,72 @@ async function sbFindByUsername(username) {
     .eq('username', username.toLowerCase())
     .maybeSingle();
   if (error) throw error;
+  return data ? normalizeRow(data) : null;
+}
+
+/** Look up by the immutable Entra object id. Returns null while the column is absent. */
+async function sbFindByEntraOid(oid) {
+  if (entraOidColumnMissing) return null;
+  const { data, error } = await supabase
+    .from('user_master')
+    .select('*')
+    .eq('entra_oid', oid)
+    .maybeSingle();
+  if (error) {
+    if (isMissingEntraOidColumn(error)) {
+      markEntraOidColumnMissing();
+      return null;
+    }
+    throw error;
+  }
+  return data ? normalizeRow(data) : null;
+}
+
+/**
+ * Match any of the email-like claims from the ID token.
+ * Ordered by id so the oldest row wins — that is the one carrying the
+ * role / allowed_departments granted before Entra changed the mail or UPN.
+ */
+async function sbFindByUsernames(usernames) {
+  const { data, error } = await supabase
+    .from('user_master')
+    .select('*')
+    .in('username', usernames)
+    .order('id')
+    .limit(1);
+  if (error) throw error;
+  return data?.[0] ? normalizeRow(data[0]) : null;
+}
+
+/** Persist the Entra-derived identity fields (oid / login id / display name). */
+async function sbUpdateIdentity(userId, identity) {
+  const patch = { updated_at: new Date().toISOString() };
+  if (identity.username) patch.username = String(identity.username).trim().toLowerCase();
+  if (identity.displayName) patch.display_name = identity.displayName;
+  if (identity.entraOid && !entraOidColumnMissing) patch.entra_oid = identity.entraOid;
+
+  const { data, error } = await supabase
+    .from('user_master')
+    .update(patch)
+    .eq('id', userId)
+    .select()
+    .maybeSingle();
+  if (error) {
+    if (isMissingEntraOidColumn(error)) {
+      markEntraOidColumnMissing();
+      delete patch.entra_oid;
+      return sbUpdateIdentity(userId, { ...identity, entraOid: '' });
+    }
+    // Unique violation on username: a duplicate row still holds that login id
+    // (see docs/db/003_merge_duplicate_user_master_rows.sql). Keep the current
+    // username rather than failing the login.
+    if (error.code === '23505' && patch.username) {
+      console.warn(`[users-store] username "${patch.username}" already taken by another row; keeping the existing value for user ${userId}.`);
+      const { username, ...rest } = identity;
+      return sbUpdateIdentity(userId, rest);
+    }
+    throw error;
+  }
   return data ? normalizeRow(data) : null;
 }
 
@@ -59,26 +143,34 @@ async function sbListUsers() {
   return (data || []).map(normalizeRow);
 }
 
-async function sbCreateUser(email) {
+async function sbCreateUser(email, identity = {}) {
   const target = email.trim().toLowerCase();
   // 先に件数確認して最初のユーザーは admin にする
   const { count } = await supabase
     .from('user_master')
     .select('id', { count: 'exact', head: true });
   const isFirst = count === 0;
+  const row = {
+    username: target,
+    display_name: identity.displayName || '',
+    role: isFirst ? 'admin' : 'user',
+    allowed_departments: [],
+    preferred_store: '',
+    preferred_department: '',
+  };
+  if (identity.entraOid && !entraOidColumnMissing) row.entra_oid = identity.entraOid;
   const { data, error } = await supabase
     .from('user_master')
-    .insert({
-      username: target,
-      display_name: '',
-      role: isFirst ? 'admin' : 'user',
-      allowed_departments: [],
-      preferred_store: '',
-      preferred_department: '',
-    })
+    .insert(row)
     .select()
     .single();
-  if (error) throw error;
+  if (error) {
+    if (isMissingEntraOidColumn(error)) {
+      markEntraOidColumnMissing();
+      return sbCreateUser(email, { ...identity, entraOid: '' });
+    }
+    throw error;
+  }
   return normalizeRow(data);
 }
 
@@ -138,6 +230,7 @@ function normalizeRow(r) {
   return {
     id: r.id,
     username: r.username,
+    entra_oid: r.entra_oid || '',
     display_name: r.display_name || '',
     role: r.role || 'user',
     allowed_departments: Array.isArray(r.allowed_departments) ? r.allowed_departments : [],
@@ -157,11 +250,53 @@ function jsonFindByUsername(username) {
   return users.find((u) => String(u.username || '').toLowerCase() === target) || null;
 }
 
+function jsonFindByEntraOid(oid) {
+  const target = String(oid || '').trim();
+  if (!target) return null;
+  const { users } = readStore();
+  return users.find((u) => String(u.entra_oid || '') === target) || null;
+}
+
+function jsonFindByUsernames(usernames) {
+  const targets = usernames.map((u) => String(u || '').trim().toLowerCase()).filter(Boolean);
+  if (targets.length === 0) return null;
+  const { users } = readStore();
+  return (
+    users
+      .filter((u) => targets.includes(String(u.username || '').toLowerCase()))
+      .sort((a, b) => Number(a.id) - Number(b.id))[0] || null
+  );
+}
+
+function jsonUpdateIdentity(userId, identity) {
+  const data = readStore();
+  const idx = data.users.findIndex((u) => Number(u.id) === Number(userId));
+  if (idx < 0) return null;
+  const current = data.users[idx];
+  const taken = identity.username
+    ? data.users.some(
+        (u) =>
+          Number(u.id) !== Number(userId) &&
+          String(u.username || '').toLowerCase() === String(identity.username).trim().toLowerCase()
+      )
+    : false;
+  const updated = {
+    ...current,
+    username: identity.username && !taken ? String(identity.username).trim().toLowerCase() : current.username,
+    entra_oid: identity.entraOid || current.entra_oid || '',
+    display_name: identity.displayName || current.display_name || '',
+    updated_at: new Date().toISOString(),
+  };
+  data.users[idx] = updated;
+  writeStore(data);
+  return updated;
+}
+
 function jsonListUsers() {
   return readStore().users;
 }
 
-function jsonCreateUser(email) {
+function jsonCreateUser(email, identity = {}) {
   const target = String(email || '').trim().toLowerCase();
   if (!target) throw new Error('email is required');
   const existing = jsonFindByUsername(target);
@@ -173,7 +308,8 @@ function jsonCreateUser(email) {
   const user = {
     id: nextId,
     username: target,
-    display_name: '',
+    entra_oid: identity.entraOid || '',
+    display_name: identity.displayName || '',
     role: isFirst ? 'admin' : 'user',
     allowed_departments: [],
     preferred_store: '',
@@ -234,14 +370,36 @@ export async function findUserByUsername(username) {
   return jsonFindByUsername(username);
 }
 
+/** Primary account lookup: immutable Entra object id. */
+export async function findUserByEntraOid(oid) {
+  const target = String(oid || '').trim();
+  if (!target) return null;
+  if (supabase) return sbFindByEntraOid(target);
+  return jsonFindByEntraOid(target);
+}
+
+/** Fallback lookup for rows created before entra_oid was persisted. */
+export async function findUserByAnyUsername(usernames) {
+  const targets = [...new Set((usernames || []).map((u) => String(u || '').trim().toLowerCase()).filter(Boolean))];
+  if (targets.length === 0) return null;
+  if (supabase) return sbFindByUsernames(targets);
+  return jsonFindByUsernames(targets);
+}
+
 export async function listUsers() {
   if (supabase) return sbListUsers();
   return jsonListUsers();
 }
 
-export async function createUserFromEmail(email) {
-  if (supabase) return sbCreateUser(email);
-  return jsonCreateUser(email);
+export async function createUserFromEmail(email, identity = {}) {
+  if (supabase) return sbCreateUser(email, identity);
+  return jsonCreateUser(email, identity);
+}
+
+/** Sync entra_oid / username / display_name from the ID token onto an existing row. */
+export async function updateUserIdentity(userId, identity) {
+  if (supabase) return sbUpdateIdentity(userId, identity);
+  return jsonUpdateIdentity(userId, identity);
 }
 
 export async function updateUserPreferences(userId, preferences) {
