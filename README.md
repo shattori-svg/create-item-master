@@ -129,12 +129,27 @@ API キーを設定しない場合はサンプルデータ（数件）が使わ�
 
 `VITE_GEMINI_API_KEY` が未設定の場合は、従来どおりキーワード一致による推測になります。
 
+API キーはサーバー側にのみ保持され、ブラウザからは `/api/ai-suggest` プロキシ経由で呼び出します（クライアントには露出しません）。
+
+### 使用モデル
+
+既定は **`gemini-3.5-flash-lite`**（AI Studio / `generativelanguage.googleapis.com`）です。環境変数 `GEMINI_MODEL` で上書きできます。
+
+```text
+GEMINI_MODEL=gemini-3.5-flash-lite
+```
+
+Gemini のモデルは世代交代で退役するため（旧 `gemini-2.5-flash` は前世代）、退役告知が来た場合は
+[提供モデル一覧](https://ai.google.dev/gemini-api/docs/models) と
+[deprecation 一覧](https://ai.google.dev/gemini-api/docs/deprecations) を確認し、この環境変数のみ差し替えてください。移行時の注意点は `docs/tech-research/20260804-gemini-model-migration.md` に記録しています。
+
 ## Cloud Run での環境変数設定
 
 Cloud Run では `.env` は自動で使われません。次の環境変数を **サービスの環境変数** として設定してください。
 
 ```text
 VITE_GEMINI_API_KEY=あなたのGemini APIキー
+GEMINI_MODEL=gemini-3.5-flash-lite           # 省略可（既定値と同じ）
 VITE_GOOGLE_SHEETS_API_KEY=あなたのGoogle Sheets APIキー
 GCS_EXPORTS_BUCKET=item-import-exports-dev   # 出力xlsx保管バケット（後述）
 ```
@@ -225,4 +240,4 @@ export GCS_EXPORTS_BUCKET="item-import-exports-dev"
 ## 制限・注意
 
 - スプレッドシート**書き込み**機能は Phase2 で実装予定です。
-- GenAI はブラウザから直接 Gemini API を呼び出すため、API キーがクライアントに露出します。本番ではプロキシ経由での呼び出しを推奨します。
+- GenAI 呼び出しはサーバー側プロキシ（`/api/ai-suggest`）経由のため、API キーはクライアントに露出しません。

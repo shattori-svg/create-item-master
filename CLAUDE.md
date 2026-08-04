@@ -37,7 +37,7 @@ Two-process app: a **Vite-bundled vanilla-JS SPA** that talks to an **Express se
 - Entra ID OIDC flow lives in `entra-auth.js` (`/login` → `/auth/callback`). On callback success, the user is upserted via `users-store.js` and the session is populated with `role`, `allowedDepartments`, `preferredStore`, `preferredDepartment`.
 - Supabase client (service role) is created once and **injected into `users-store.js` via `initUsersStore(supabase)`** — `users-store.js` falls back to `data/users.json` when Supabase env vars are missing (dev only).
 - Serves `dist/` statically. Assets get a 1y immutable cache header; SPA fallback sends `dist/index.html` for unknown routes.
-- Generates `/config.js` at request time as `window.__APP_CONFIG__ = {}` — API keys are intentionally *not* exposed to the client. Gemini calls go through the `/api/ai-suggest` proxy so `VITE_GEMINI_API_KEY` stays server-side.
+- Generates `/config.js` at request time as `window.__APP_CONFIG__ = {}` — API keys are intentionally *not* exposed to the client. Gemini calls go through the `/api/ai-suggest` proxy so `VITE_GEMINI_API_KEY` stays server-side. The model is `GEMINI_MODEL` (default `gemini-3.5-flash-lite`, AI Studio endpoint — **not** Vertex AI); Gemini 3.x can return `thought:true` parts, so the proxy filters them before returning text.
 
 ### Department permission model
 

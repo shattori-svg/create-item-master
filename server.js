@@ -36,6 +36,13 @@ const GCS_EXPORTS_BUCKET = process.env.GCS_EXPORTS_BUCKET || '';
 const gcsBucket = GCS_EXPORTS_BUCKET ? new Storage().bucket(GCS_EXPORTS_BUCKET) : null;
 const SIGNED_URL_TTL_MS = 5 * 60 * 1000;
 
+// --- Gemini (AI Studio) model for /api/ai-suggest ---
+// Model IDs get retired, so keep it overridable without a code change.
+// gemini-2.5-flash is the previous generation; gemini-3.5-flash-lite is GA with
+// the same text pricing and defaults to thinking_level=minimal (low latency),
+// which is what this single-shot classification prompt wants.
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
+
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 /**
@@ -763,11 +770,14 @@ app.post('/api/ai-suggest', requireAuth, async (req, res) => {
   if (!prompt) return res.status(400).json({ error: 'prompt required' });
   try {
     const apiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(GEMINI_MODEL)}:generateContent`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
+        // Key goes in a header, not the query string, so it stays out of logs.
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_API_KEY },
+        // No temperature/topP/topK/candidateCount: Gemini 3.x ignores the sampling
+        // params (and will reject them in a future generation).
+        body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }] }),
       }
     );
     if (!apiRes.ok) {
@@ -775,7 +785,22 @@ app.post('/api/ai-suggest', requireAuth, async (req, res) => {
       return res.status(502).json({ error: `Gemini API error: ${apiRes.status}`, detail: errBody });
     }
     const data = await apiRes.json();
-    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+    // Gemini 3.x always reasons, and reasoning can surface as extra parts marked
+    // thought:true. Skip those — the caller matches group codes by substring, so a
+    // leaked thought summary could yield the wrong code.
+    const parts = data?.candidates?.[0]?.content?.parts;
+    const text = Array.isArray(parts)
+      ? parts
+          .filter((p) => p && p.thought !== true && typeof p.text === 'string')
+          .map((p) => p.text)
+          .join('')
+      : '';
+    if (!text) {
+      console.warn(
+        `POST /api/ai-suggest: empty text from ${GEMINI_MODEL}`,
+        `finishReason=${data?.candidates?.[0]?.finishReason ?? 'unknown'}`
+      );
+    }
     return res.json({ text });
   } catch (err) {
     console.error('POST /api/ai-suggest:', err);
