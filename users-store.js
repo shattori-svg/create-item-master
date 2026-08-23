@@ -1,16 +1,17 @@
 /**
  * ユーザーマスタ管理
- * Supabase の user_master テーブルを使用。
- * Supabase 未設定時は data/users.json にフォールバック（開発用）。
+ * Cloud SQL (PostgreSQL) の user_master テーブルを使用。
+ * DB 未設定時は data/users.json にフォールバック（開発用）。
  */
 import fs from 'node:fs';
 import path from 'node:path';
 
-// --- Supabase client (server.js から init() で注入) ---
-let supabase = null;
+// --- DB module (server.js から init() で注入) ---
+/** @type {typeof import("./db.js") | null} */
+let db = null;
 
-export function init(supabaseClient) {
-  supabase = supabaseClient;
+export function init(dbModule) {
+  db = dbModule;
 }
 
 // --- JSON ファイルフォールバック（開発用） ---
@@ -38,7 +39,7 @@ function writeStore(data) {
   fs.writeFileSync(USERS_FILE, JSON.stringify(data, null, 2), 'utf8');
 }
 
-// --- Supabase 実装 ---
+// --- PostgreSQL 実装 ---
 
 // Set when Postgres reports "column entra_oid does not exist" (SQLSTATE 42703),
 // i.e. docs/db/002_add_entra_oid_to_user_master.sql has not been applied yet.
@@ -48,7 +49,13 @@ let entraOidColumnMissing = false;
 
 function isMissingEntraOidColumn(error) {
   if (!error) return false;
-  return error.code === '42703' || /entra_oid/.test(error.message || '');
+  // Both conditions are required. The old form was `code === '42703' || /entra_oid/`,
+  // and the message arm also matched the unique violation on
+  // user_master_entra_oid_key ("...violates unique constraint "user_master_entra_oid_key"").
+  // That misread a duplicate-oid write as a missing column and permanently
+  // dropped the process into username-matching mode, defeating the oid-based
+  // account matching this column exists for.
+  return error.code === '42703' && /entra_oid/.test(error.message || '');
 }
 
 function markEntraOidColumnMissing() {
@@ -58,32 +65,33 @@ function markEntraOidColumnMissing() {
   }
 }
 
-async function sbFindByUsername(username) {
-  const { data, error } = await supabase
-    .from('user_master')
-    .select('*')
-    .eq('username', username.toLowerCase())
-    .maybeSingle();
-  if (error) throw error;
-  return data ? normalizeRow(data) : null;
+async function pgFindByUsername(username) {
+  // `order by id limit 1` instead of an error on duplicates: rows created before
+  // entra_oid matching existed can still collide (see 003_merge_duplicate_user_master_rows.sql),
+  // and the oldest row is the one holding the real role / allowed_departments.
+  const row = await db.queryOne(
+    'select * from user_master where username = $1 order by id limit 1',
+    [String(username || '').toLowerCase()],
+  );
+  return row ? normalizeRow(row) : null;
 }
 
 /** Look up by the immutable Entra object id. Returns null while the column is absent. */
-async function sbFindByEntraOid(oid) {
+async function pgFindByEntraOid(oid) {
   if (entraOidColumnMissing) return null;
-  const { data, error } = await supabase
-    .from('user_master')
-    .select('*')
-    .eq('entra_oid', oid)
-    .maybeSingle();
-  if (error) {
-    if (isMissingEntraOidColumn(error)) {
+  try {
+    const row = await db.queryOne(
+      'select * from user_master where entra_oid = $1 order by id limit 1',
+      [oid],
+    );
+    return row ? normalizeRow(row) : null;
+  } catch (err) {
+    if (isMissingEntraOidColumn(err)) {
       markEntraOidColumnMissing();
       return null;
     }
-    throw error;
+    throw err;
   }
-  return data ? normalizeRow(data) : null;
 }
 
 /**
@@ -91,141 +99,161 @@ async function sbFindByEntraOid(oid) {
  * Ordered by id so the oldest row wins — that is the one carrying the
  * role / allowed_departments granted before Entra changed the mail or UPN.
  */
-async function sbFindByUsernames(usernames) {
-  const { data, error } = await supabase
-    .from('user_master')
-    .select('*')
-    .in('username', usernames)
-    .order('id')
-    .limit(1);
-  if (error) throw error;
-  return data?.[0] ? normalizeRow(data[0]) : null;
+async function pgFindByUsernames(usernames) {
+  const row = await db.queryOne(
+    'select * from user_master where username = any($1::text[]) order by id limit 1',
+    [usernames],
+  );
+  return row ? normalizeRow(row) : null;
 }
 
 /** Persist the Entra-derived identity fields (oid / login id / display name). */
-async function sbUpdateIdentity(userId, identity) {
-  const patch = { updated_at: new Date().toISOString() };
-  if (identity.username) patch.username = String(identity.username).trim().toLowerCase();
-  if (identity.displayName) patch.display_name = identity.displayName;
-  if (identity.entraOid && !entraOidColumnMissing) patch.entra_oid = identity.entraOid;
-
-  const { data, error } = await supabase
-    .from('user_master')
-    .update(patch)
-    .eq('id', userId)
-    .select()
-    .maybeSingle();
-  if (error) {
-    if (isMissingEntraOidColumn(error)) {
-      markEntraOidColumnMissing();
-      delete patch.entra_oid;
-      return sbUpdateIdentity(userId, { ...identity, entraOid: '' });
-    }
-    // Unique violation on username: a duplicate row still holds that login id
-    // (see docs/db/003_merge_duplicate_user_master_rows.sql). Keep the current
-    // username rather than failing the login.
-    if (error.code === '23505' && patch.username) {
-      console.warn(`[users-store] username "${patch.username}" already taken by another row; keeping the existing value for user ${userId}.`);
-      const { username, ...rest } = identity;
-      return sbUpdateIdentity(userId, rest);
-    }
-    throw error;
+async function pgUpdateIdentity(userId, identity) {
+  const sets = ['updated_at = now()'];
+  const params = [];
+  const username = identity.username ? String(identity.username).trim().toLowerCase() : '';
+  if (username) {
+    params.push(username);
+    sets.push(`username = $${params.length}`);
   }
-  return data ? normalizeRow(data) : null;
+  if (identity.displayName) {
+    params.push(identity.displayName);
+    sets.push(`display_name = $${params.length}`);
+  }
+  if (identity.entraOid && !entraOidColumnMissing) {
+    params.push(identity.entraOid);
+    sets.push(`entra_oid = $${params.length}`);
+  }
+  params.push(userId);
+
+  try {
+    const row = await db.queryOne(
+      `update user_master set ${sets.join(', ')} where id = $${params.length} returning *`,
+      params,
+    );
+    return row ? normalizeRow(row) : null;
+  } catch (err) {
+    if (isMissingEntraOidColumn(err)) {
+      markEntraOidColumnMissing();
+      return pgUpdateIdentity(userId, { ...identity, entraOid: '' });
+    }
+    // Unique violation: a duplicate row still holds that login id or object id
+    // (see docs/db/003_merge_duplicate_user_master_rows.sql). Drop just the
+    // conflicting field and retry, so the login succeeds instead of 500-ing.
+    // err.constraint names the index that fired, which is what distinguishes the
+    // two cases — the message text cannot be trusted for this.
+    if (err.code === '23505') {
+      if (err.constraint === 'user_master_username_key' && username) {
+        console.warn(`[users-store] username "${username}" already taken by another row; keeping the existing value for user ${userId}.`);
+        const { username: _droppedName, ...rest } = identity;
+        return pgUpdateIdentity(userId, rest);
+      }
+      if (err.constraint === 'user_master_entra_oid_key' && identity.entraOid) {
+        console.warn(`[users-store] entra_oid "${identity.entraOid}" is already claimed by another row; keeping the existing value for user ${userId}. Run docs/db/003_merge_duplicate_user_master_rows.sql.`);
+        const { entraOid: _droppedOid, ...rest } = identity;
+        return pgUpdateIdentity(userId, rest);
+      }
+    }
+    throw err;
+  }
 }
 
-async function sbListUsers() {
-  const { data, error } = await supabase
-    .from('user_master')
-    .select('*')
-    .order('id');
-  if (error) throw error;
-  return (data || []).map(normalizeRow);
+async function pgListUsers() {
+  const rows = await db.queryRows('select * from user_master order by id');
+  return rows.map(normalizeRow);
 }
 
-async function sbCreateUser(email, identity = {}) {
+async function pgCreateUser(email, identity = {}) {
   const target = email.trim().toLowerCase();
   // 先に件数確認して最初のユーザーは admin にする
-  const { count } = await supabase
-    .from('user_master')
-    .select('id', { count: 'exact', head: true });
-  const isFirst = count === 0;
-  const row = {
-    username: target,
-    display_name: identity.displayName || '',
-    role: isFirst ? 'admin' : 'user',
-    allowed_departments: [],
-    preferred_store: '',
-    preferred_department: '',
-  };
-  if (identity.entraOid && !entraOidColumnMissing) row.entra_oid = identity.entraOid;
-  const { data, error } = await supabase
-    .from('user_master')
-    .insert(row)
-    .select()
-    .single();
-  if (error) {
-    if (isMissingEntraOidColumn(error)) {
-      markEntraOidColumnMissing();
-      return sbCreateUser(email, { ...identity, entraOid: '' });
-    }
-    throw error;
+  const countRow = await db.queryOne('select count(*)::int as count from user_master');
+  const isFirst = (countRow?.count ?? 0) === 0;
+
+  const columns = ['username', 'display_name', 'role', 'preferred_store', 'preferred_department'];
+  const params = [target, identity.displayName || '', isFirst ? 'admin' : 'user', '', ''];
+  const placeholders = params.map((_, i) => `$${i + 1}`);
+
+  // allowed_departments is text[] (see docs/db/000_baseline.sql); node-postgres
+  // serializes a JS array into the Postgres array literal the cast expects.
+  params.push([]);
+  columns.push('allowed_departments');
+  placeholders.push(`$${params.length}::text[]`);
+
+  if (identity.entraOid && !entraOidColumnMissing) {
+    params.push(identity.entraOid);
+    columns.push('entra_oid');
+    placeholders.push(`$${params.length}`);
   }
-  return normalizeRow(data);
+
+  try {
+    const row = await db.queryOne(
+      `insert into user_master (${columns.join(', ')}) values (${placeholders.join(', ')}) returning *`,
+      params,
+    );
+    return normalizeRow(row);
+  } catch (err) {
+    if (isMissingEntraOidColumn(err)) {
+      markEntraOidColumnMissing();
+      return pgCreateUser(email, { ...identity, entraOid: '' });
+    }
+    throw err;
+  }
 }
 
-async function sbUpdatePreferences(userId, preferences) {
+async function pgUpdatePreferences(userId, preferences) {
   // 現在の allowed_departments を取得
-  const { data: current, error: fetchErr } = await supabase
-    .from('user_master')
-    .select('allowed_departments, preferred_department')
-    .eq('id', userId)
-    .maybeSingle();
-  if (fetchErr) throw fetchErr;
+  const current = await db.queryOne(
+    'select allowed_departments, preferred_department from user_master where id = $1',
+    [userId],
+  );
   if (!current) return null;
 
   const newDept = preferences.preferredDepartment ?? current.preferred_department ?? '';
   const currentAllowed = Array.isArray(current.allowed_departments) ? current.allowed_departments : [];
   const allowedDepartments =
     currentAllowed.length === 0 && newDept ? [newDept] : currentAllowed;
-
-  const { data, error } = await supabase
-    .from('user_master')
-    .update({
-      display_name: preferences.displayName ?? '',
-      preferred_store: preferences.preferredStore ?? '',
-      preferred_department: newDept,
-      allowed_departments: allowedDepartments,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', userId)
-    .select()
-    .single();
-  if (error) throw error;
-  return normalizeRow(data);
+  const row = await db.queryOne(
+    `update user_master set
+       display_name = $1,
+       preferred_store = $2,
+       preferred_department = $3,
+       allowed_departments = $4::text[],
+       updated_at = now()
+     where id = $5
+     returning *`,
+    [
+      preferences.displayName ?? '',
+      preferences.preferredStore ?? '',
+      newDept,
+      allowedDepartments,
+      userId,
+    ],
+  );
+  return row ? normalizeRow(row) : null;
 }
 
-async function sbUpdateByAdmin(targetId, updates) {
-  const patch = { updated_at: new Date().toISOString() };
+async function pgUpdateByAdmin(targetId, updates) {
+  const sets = ['updated_at = now()'];
+  const params = [];
   if (updates.role !== undefined) {
     if (!['admin', 'user'].includes(updates.role)) throw new Error(`Invalid role: ${updates.role}`);
-    patch.role = updates.role;
+    params.push(updates.role);
+    sets.push(`role = $${params.length}`);
   }
   if (updates.allowed_departments !== undefined) {
     if (!Array.isArray(updates.allowed_departments)) throw new Error('allowed_departments must be array');
-    patch.allowed_departments = updates.allowed_departments.map(String);
+    params.push(updates.allowed_departments.map(String));
+    sets.push(`allowed_departments = $${params.length}::text[]`);
   }
-  const { data, error } = await supabase
-    .from('user_master')
-    .update(patch)
-    .eq('id', targetId)
-    .select()
-    .maybeSingle();
-  if (error) throw error;
-  return data ? normalizeRow(data) : null;
-}
+  params.push(targetId);
 
-/** Supabase の行をアプリ内形式に正規化 */
+  const row = await db.queryOne(
+    `update user_master set ${sets.join(', ')} where id = $${params.length} returning *`,
+    params,
+  );
+  return row ? normalizeRow(row) : null;
+}
+/** DB の行をアプリ内形式に正規化 */
 function normalizeRow(r) {
   return {
     id: r.id,
@@ -366,7 +394,7 @@ function jsonUpdateByAdmin(targetId, updates) {
 // --- 公開 API（すべて async） ---
 
 export async function findUserByUsername(username) {
-  if (supabase) return sbFindByUsername(username);
+  if (db) return pgFindByUsername(username);
   return jsonFindByUsername(username);
 }
 
@@ -374,7 +402,7 @@ export async function findUserByUsername(username) {
 export async function findUserByEntraOid(oid) {
   const target = String(oid || '').trim();
   if (!target) return null;
-  if (supabase) return sbFindByEntraOid(target);
+  if (db) return pgFindByEntraOid(target);
   return jsonFindByEntraOid(target);
 }
 
@@ -382,32 +410,32 @@ export async function findUserByEntraOid(oid) {
 export async function findUserByAnyUsername(usernames) {
   const targets = [...new Set((usernames || []).map((u) => String(u || '').trim().toLowerCase()).filter(Boolean))];
   if (targets.length === 0) return null;
-  if (supabase) return sbFindByUsernames(targets);
+  if (db) return pgFindByUsernames(targets);
   return jsonFindByUsernames(targets);
 }
 
 export async function listUsers() {
-  if (supabase) return sbListUsers();
+  if (db) return pgListUsers();
   return jsonListUsers();
 }
 
 export async function createUserFromEmail(email, identity = {}) {
-  if (supabase) return sbCreateUser(email, identity);
+  if (db) return pgCreateUser(email, identity);
   return jsonCreateUser(email, identity);
 }
 
 /** Sync entra_oid / username / display_name from the ID token onto an existing row. */
 export async function updateUserIdentity(userId, identity) {
-  if (supabase) return sbUpdateIdentity(userId, identity);
+  if (db) return pgUpdateIdentity(userId, identity);
   return jsonUpdateIdentity(userId, identity);
 }
 
 export async function updateUserPreferences(userId, preferences) {
-  if (supabase) return sbUpdatePreferences(userId, preferences);
+  if (db) return pgUpdatePreferences(userId, preferences);
   return jsonUpdatePreferences(userId, preferences);
 }
 
 export async function updateUserByAdmin(targetId, updates) {
-  if (supabase) return sbUpdateByAdmin(targetId, updates);
+  if (db) return pgUpdateByAdmin(targetId, updates);
   return jsonUpdateByAdmin(targetId, updates);
 }

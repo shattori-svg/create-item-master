@@ -29,19 +29,24 @@ Backend-only changes (`server.js`, `entra-auth.js`, `users-store.js`) need only 
 
 ## Architecture
 
-Two-process app: a **Vite-bundled vanilla-JS SPA** that talks to an **Express server** which fronts **Supabase** (Postgres) and **Microsoft Entra ID** (OIDC). Output is an .xlsx file that goes into a separate basis system.
+Two-process app: a **Vite-bundled vanilla-JS SPA** that talks to an **Express server** which fronts **Cloud SQL for PostgreSQL** and **Microsoft Entra ID** (OIDC). Output is an .xlsx file that goes into a separate basis system.
 
 ### Server (`server.js`)
 
 - Express + `express-session` (cookie `item_import_sid`). All non-public paths gated by `requireAuth`; admin paths by `requireAdmin`.
 - Entra ID OIDC flow lives in `entra-auth.js` (`/login` → `/auth/callback`). On callback success, the user is upserted via `users-store.js` and the session is populated with `role`, `allowedDepartments`, `preferredStore`, `preferredDepartment`.
-- Supabase client (service role) is created once and **injected into `users-store.js` via `initUsersStore(supabase)`** — `users-store.js` falls back to `data/users.json` when Supabase env vars are missing (dev only).
+- **`db.js`** owns the `pg.Pool` (created lazily) and exposes `query` / `queryRows` / `queryOne` / `withTransaction` / `bulkUpsert` / `arrayParam`. No ORM — endpoints write plain parameterized SQL. It is **injected into `users-store.js` via `initUsersStore(db)`**; `users-store.js` falls back to `data/users.json` when the DB env vars are missing (dev only).
+- Connection mode is picked from env in this order: `DATABASE_URL` → `INSTANCE_UNIX_SOCKET` (Cloud Run + `--add-cloudsql-instances`) → `DB_HOST` (TCP). See `docs/cloudsql-migration.md`.
+- **Pool sizing is a hard constraint**: Cloud Run scales horizontally, so `--max-instances × DB_POOL_MAX` must stay under the instance's `max_connections`.
+- `bulkUpsert` reproduces the old `.upsert(rows, { onConflict })` semantics. Callers **must** de-duplicate on the conflict key first — Postgres rejects a statement that hits the same key twice.
+- `user_master.allowed_departments` is `text[]` and `operation_log.details` is `jsonb` (see `docs/db/000_baseline.sql`). Arrays are written as `$n::text[]` with a JS array; `details` is written as a `JSON.stringify`'d **untyped** parameter so Postgres coerces it from the column type.
+- `users-store.js` degrades to username matching when `user_master.entra_oid` is absent. That detection must key on **SQLSTATE 42703 only** — an earlier message-substring check also matched the unique violation on `user_master_entra_oid_key` and permanently disabled oid matching. Unique violations are disambiguated by `err.constraint`, not by message text.
 - Serves `dist/` statically. Assets get a 1y immutable cache header; SPA fallback sends `dist/index.html` for unknown routes.
 - Generates `/config.js` at request time as `window.__APP_CONFIG__ = {}` — API keys are intentionally *not* exposed to the client. Gemini calls go through the `/api/ai-suggest` proxy so `VITE_GEMINI_API_KEY` stays server-side. The model is `GEMINI_MODEL` (default `gemini-3.5-flash-lite`, AI Studio endpoint — **not** Vertex AI); Gemini 3.x can return `thought:true` parts, so the proxy filters them before returning text.
 
 ### Department permission model
 
-Three Supabase masters are partitioned by department, and the dept digit is **encoded inside the primary key**:
+Three master tables are partitioned by department, and the dept digit is **encoded inside the primary key**:
 
 - `group_master.product_group_code` — first char is the dept digit (`"1"` → dept `"01"`).
 - `supplier_master.supplier_no` — the **second** char is the dept digit.
@@ -58,13 +63,22 @@ Server-side filtering uses `LIKE` on those positions (see `deptDigitGroup`, `get
 - `src/lib/i18n.js` + `src/locales/{ja,th}.json` — runtime language switch (Japanese / Thai). Keep both locale files in sync when adding strings.
 - Product types: manufacturer / scale / raw-material / consumables. Raw-material and consumables share UI/validation paths via `isRawMaterialLike()` in `main.js`. Delivery destination row (store vs DC) is shown only for departments listed in `DELIVERY_DEST_DEPARTMENTS = ['03', '05']`.
 
-### Supabase tables touched by this app
+### Postgres tables touched by this app
 
-`user_master`, `group_master`, `supplier_master`, `store_master`, `operation_log`. Schema/columns can be inferred from the `select` / `upsert` calls in `server.js`.
+`user_master`, `group_master`, `supplier_master`, `store_master`, `operation_log`.
+
+**`docs/db/000_baseline.sql` is the schema of record** (captured 2026-08-23 from Supabase with `pg_dump --schema=public --schema-only`). `docs/db/001..003` are the incremental migrations applied on top of the original schema and are already folded into the baseline. Read the baseline before changing any query — notable points:
+
+- `group_master` / `supplier_master` use `character varying` (unbounded) and carry `created_at` / `updated_at`; `store_master` and `operation_log` do not have `updated_at`.
+- `group_master.description` and `store_master.store_name` are `NOT NULL`.
+- `id` columns are `bigint` + `nextval` sequences (serial-style, not `identity`) — a restore needs `setval` if rows are loaded with explicit ids.
+- `user_master` has `UNIQUE (username)` plus a **partial** unique index `user_master_entra_oid_key ON (entra_oid) WHERE entra_oid IS NOT NULL`, and `CHECK (role IN ('admin','user'))`.
+- No RLS policies — access is service-role/`app`-user only, so the dept checks in `server.js` are the only enforcement.
+- The master upserts deliberately do **not** touch `updated_at`, matching the old Supabase `.upsert()` behavior. Those columns therefore stay at the row's insert time; fix only if the audit value is actually wanted.
 
 ### Auth env vars
 
-Server boots in “externalAuth=false” mode without these — `/login` returns 503. To run with real auth set `ENTRA_CLIENT_ID`, `ENTRA_CLIENT_SECRET`, `ENTRA_TENANT_ID`, `ENTRA_REDIRECT_URI`, `SESSION_SECRET`, plus `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` for DB access. See `README.md` for the full list and Cloud Run deployment notes.
+Server boots in “externalAuth=false” mode without these — `/login` returns 503. To run with real auth set `ENTRA_CLIENT_ID`, `ENTRA_CLIENT_SECRET`, `ENTRA_TENANT_ID`, `ENTRA_REDIRECT_URI`, `SESSION_SECRET`, plus the DB vars (`DATABASE_URL`, or `INSTANCE_UNIX_SOCKET` + `DB_USER` / `DB_PASS` / `DB_NAME`) for DB access. See `README.md` for the full list and Cloud Run deployment notes.
 
 ## Conventions
 
