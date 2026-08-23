@@ -49,7 +49,13 @@ let entraOidColumnMissing = false;
 
 function isMissingEntraOidColumn(error) {
   if (!error) return false;
-  return error.code === '42703' || /entra_oid/.test(error.message || '');
+  // Both conditions are required. The old form was `code === '42703' || /entra_oid/`,
+  // and the message arm also matched the unique violation on
+  // user_master_entra_oid_key ("...violates unique constraint "user_master_entra_oid_key"").
+  // That misread a duplicate-oid write as a missing column and permanently
+  // dropped the process into username-matching mode, defeating the oid-based
+  // account matching this column exists for.
+  return error.code === '42703' && /entra_oid/.test(error.message || '');
 }
 
 function markEntraOidColumnMissing() {
@@ -131,13 +137,22 @@ async function pgUpdateIdentity(userId, identity) {
       markEntraOidColumnMissing();
       return pgUpdateIdentity(userId, { ...identity, entraOid: '' });
     }
-    // Unique violation on username: a duplicate row still holds that login id
-    // (see docs/db/003_merge_duplicate_user_master_rows.sql). Keep the current
-    // username rather than failing the login.
-    if (err.code === '23505' && username) {
-      console.warn(`[users-store] username "${username}" already taken by another row; keeping the existing value for user ${userId}.`);
-      const { username: _dropped, ...rest } = identity;
-      return pgUpdateIdentity(userId, rest);
+    // Unique violation: a duplicate row still holds that login id or object id
+    // (see docs/db/003_merge_duplicate_user_master_rows.sql). Drop just the
+    // conflicting field and retry, so the login succeeds instead of 500-ing.
+    // err.constraint names the index that fired, which is what distinguishes the
+    // two cases — the message text cannot be trusted for this.
+    if (err.code === '23505') {
+      if (err.constraint === 'user_master_username_key' && username) {
+        console.warn(`[users-store] username "${username}" already taken by another row; keeping the existing value for user ${userId}.`);
+        const { username: _droppedName, ...rest } = identity;
+        return pgUpdateIdentity(userId, rest);
+      }
+      if (err.constraint === 'user_master_entra_oid_key' && identity.entraOid) {
+        console.warn(`[users-store] entra_oid "${identity.entraOid}" is already claimed by another row; keeping the existing value for user ${userId}. Run docs/db/003_merge_duplicate_user_master_rows.sql.`);
+        const { entraOid: _droppedOid, ...rest } = identity;
+        return pgUpdateIdentity(userId, rest);
+      }
     }
     throw err;
   }
