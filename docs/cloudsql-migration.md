@@ -350,16 +350,109 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:${RUN_SA}" --role='roles/cloudsql.client'
 ```
 
-デプロイ（`--add-cloudsql-instances` が Auth Proxy ソケットを生やす）:
+先に IAM を付与する（既存の稼働に影響しない追加操作）:
+
+```bash
+export RUN_SA='894174291476-compute@developer.gserviceaccount.com'
+gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:${RUN_SA}" --role='roles/cloudsql.client' --condition=None
+gcloud secrets add-iam-policy-binding item-master-db-password --project="$PROJECT_ID" --member="serviceAccount:${RUN_SA}" --role='roles/secretmanager.secretAccessor'
+```
+
+イメージをビルドする（既存の `deploy.sh` と同じ方式）:
+
+```bash
+gcloud builds submit --tag "gcr.io/${PROJECT_ID}/item-master-create-dev" --project "$PROJECT_ID"
+```
+
+🚨 **`--set-env-vars` / `--set-secrets` は使わないこと。** 既存の環境変数を**全置換**するため、
+`ENTRA_CLIENT_SECRET` / `SESSION_SECRET` / `MASTER_SYNC_TOKEN` などが消えてサービスが壊れる。
+**必ず追加式の `--update-env-vars` / `--update-secrets` を使う。**
+
+まずトラフィック 0% の検証用リビジョンを出す（`--add-cloudsql-instances` が Auth Proxy ソケットを生やす）:
 
 ```bash
 gcloud run deploy item-master-create-dev \
-  --project="$PROJECT_ID" --region="$REGION" \
+  --image="gcr.io/${PROJECT_ID}/item-master-create-dev" \
+  --project="$PROJECT_ID" --region="$REGION" --platform=managed --allow-unauthenticated \
   --add-cloudsql-instances="${PROJECT_ID}:${REGION}:${INSTANCE}" \
-  --set-env-vars="INSTANCE_UNIX_SOCKET=/cloudsql/${PROJECT_ID}:${REGION}:${INSTANCE},DB_USER=${DB_USER},DB_NAME=${DB_NAME},DB_POOL_MAX=4" \
-  --set-secrets="DB_PASS=item-master-db-password:latest" \
-  --max-instances=3 \
-  --remove-env-vars=SUPABASE_URL,SUPABASE_SERVICE_ROLE_KEY
+  --update-env-vars="INSTANCE_UNIX_SOCKET=/cloudsql/${PROJECT_ID}:${REGION}:${INSTANCE},DB_USER=${DB_USER},DB_NAME=${DB_NAME},DB_POOL_MAX=4" \
+  --update-secrets="DB_PASS=item-master-db-password:latest" \
+  --no-traffic --tag=cloudsql
+```
+
+`SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` は新コードが読まないので残しても無害。
+切り替え完了後に `--remove-env-vars=SUPABASE_URL,SUPABASE_SERVICE_ROLE_KEY` で掃除する。
+
+検証用 URL は `https://cloudsql---item-master-create-dev-894174291476.asia-northeast1.run.app`。
+ユーザーは従来のリビジョンを使い続けるので影響がない。
+
+⚠️ **タグ URL ではログインが通らない。** `ENTRA_REDIRECT_URI` が本番 URL 固定なので
+OIDC のコールバックが redirect_uri 不一致で失敗する。ログインを含めて検証するには、
+Entra アプリ登録にタグ URL の `/auth/callback` を**追加**し（可逆）、
+そのリビジョンだけ `--update-env-vars=ENTRA_REDIRECT_URI=<タグURL>/auth/callback` を指定する。
+
+### 🚨 ブロッカー: このプロジェクトは新規リビジョンを作成できない（2026-08-23 時点・未解決）
+
+`gcloud run deploy` が何をしても `Container import failed` で失敗する。
+**移行作業とは無関係の既存の環境問題**で、以下の対照実験で確認済み:
+
+| 実験 | 結果 |
+|---|---|
+| 新イメージ + Cloud SQL 設定 | ❌ |
+| **稼働中リビジョン 00030 と同一の既知良好イメージ** | ❌ |
+| シークレットと Cloud SQL 設定を外した状態 | ❌ |
+| **まったく新規の別サービス** | ❌ |
+
+つまり `00030`（2026-08-04 作成、インポート済み）は動き続けるが、
+**このプロジェクトには今いかなるデプロイもできない**。移行の切り替え以前に、
+このアプリへの緊急修正も不可能な状態であることを意味する。
+
+原因の最有力候補: **Google APIs サービスエージェント
+`894174291476@cloudservices.gserviceaccount.com` に IAM バインディングが 1 つも無い**
+（既定では `roles/editor` を保持する）。同日、以下の 3 つも欠落していて個別に補った経緯があり、
+プロジェクトの権限が広範に剥がされた形跡と整合する:
+
+| 欠落していた権限 | 対処 |
+|---|---|
+| Compute SA → `item-master-creater_cloudbuild` バケット読み取り | バケット限定で `storage.objectViewer` 付与 |
+| Compute SA → `run-sources-...` バケット読み取り | バケット限定で `storage.objectViewer` 付与 |
+| Cloud Run サービスエージェント → AR 読み取り | リポジトリ + プロジェクトに `artifactregistry.reader` 付与 |
+
+⚠️ ただし **監査ログに import 段階の権限拒否は出ていない**ため、この推定は確証がない。
+`@cloudservices` への `roles/editor` 復元はセキュリティ上意図的に外された可能性があり、
+**変更した担当者に確認してから**実施すること。復元しても解決しない場合は Google Cloud サポート案件。
+
+この解消までカットオーバーは実行できない。Supabase 側は稼働中なので業務影響はない。
+
+### 切り替え（ここから初めてユーザー影響が出る）
+
+**直前に必ずデータを再同期する。** Cloud SQL のデータはリストア時点のスナップショットで、
+それ以降 Supabase 側に入った書き込み（xlsx 出力の操作ログ、ユーザー設定変更、毎時の supplier 同期）は
+そのまま切り替えると失われる。データ量が小さいので丸ごと入れ直すのが確実（1分未満）:
+
+```bash
+pg_dump -h "$SUPA_HOST" -p 5432 -U "$SUPA_USER" -d postgres --schema=public --no-owner --no-acl -Fc -f supabase_backup.dump
+pg_restore --no-owner --no-acl --clean --if-exists -d "$LOCAL_CONN" supabase_backup.dump
+```
+
+その後トラフィックを移す:
+
+```bash
+gcloud run services update-traffic item-master-create-dev \
+  --project="$PROJECT_ID" --region="$REGION" --to-latest
+```
+
+**全ユーザーのセッションが切れて再ログインが必要になる**（`express-session` が MemoryStore のため、
+リビジョンが変わるとセッションが消える。`SESSION_SECRET` が同じでも同様）。業務時間外に実施する。
+
+### ロールバック
+
+旧リビジョンは残るので即座に戻せる。Supabase 側のデータも残っているので、
+**切り替え後 1〜2 週間は Supabase を解約しない**。
+
+```bash
+gcloud run services update-traffic item-master-create-dev \
+  --project="$PROJECT_ID" --region="$REGION" --to-revisions=<旧リビジョン名>=100
 ```
 
 ### プールサイズの制約（必ず満たすこと）
