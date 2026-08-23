@@ -258,6 +258,32 @@ export GCS_EXPORTS_BUCKET="item-import-exports-dev"
 
 `GCS_EXPORTS_BUCKET` が未設定の場合、サーバーは GCS への保管をスキップし、操作ログのみ記録します（後方互換）。
 
+## リリース（本番デプロイ）
+
+本番へのデプロイは **`main` への push で自動実行**されます。手動コマンドや `deploy.sh` は使いません。
+
+| 項目 | 値 |
+|---|---|
+| トリガー | `rmgpgab-item-master-create-dev-asia-northeast1-shattori-svg-cbf`（Cloud Build） |
+| 対象リポジトリ | `shattori-svg/create-item-master` |
+| 発火条件 | **`main` への push のみ**（`^main$`） |
+| 実行サービスアカウント | `894174291476-compute@developer.gserviceaccount.com` |
+| 処理 | `docker build` → `docker push`（Artifact Registry）→ `gcloud run services update --image=...` |
+
+つまり:
+
+- **ブランチを push してもデプロイは走りません。** レビュー用の push は安全です。
+- **`main` へのマージがリリースそのものです。** マージ前にレビューを完了させてください。
+- デプロイ手順は `--image` とラベルしか変更しません。環境変数・シークレット・
+  `--add-cloudsql-instances` などのサービス設定はテンプレート側に残るため、
+  リリースでは上書きされません。設定変更は `gcloud run services update` で別途行います。
+
+⚠️ `deploy.sh` / `deploy.ps1` はこの経路と無関係で、`gcr.io` リポジトリが存在しないため
+実行しても失敗します。使わないでください。
+
+⚠️ 新しいリビジョンに切り替わると `express-session` の MemoryStore が失われるため、
+**全ユーザーが再ログインを求められます**。業務時間外のリリースを推奨します。
+
 ## 制限・注意
 
 - スプレッドシート**書き込み**機能は Phase2 で実装予定です。
