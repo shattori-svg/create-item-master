@@ -543,7 +543,12 @@ Cloud Run は 1 インスタンスあたり最大 100 接続までという上�
 
 ## Phase 4: 検証チェックリスト
 
-- [ ] `/healthz` が 200
+- [ ] `/` が 302（`/login` へリダイレクト）、`/config.js` が 200
+      ⚠️ `/healthz` は**この環境では常に 404** になる（旧コード・新コード・全ホスト名で再現）。
+      アプリには定義されているが Google Frontend 側で遮られているため、稼働確認には使えない。
+- [ ] Cloud Run のサービス URL は 2 形式あり、**どちらも同じサービスに到達する**
+      （`item-master-create-dev-894174291476.asia-northeast1.run.app` と
+      `item-master-create-dev-fjrewbvfoa-an.a.run.app`）。`ENTRA_REDIRECT_URI` は前者を指している
 - [ ] ログイン（Entra ID）が通り、`role` / `allowed_departments` が復元されている
 - [ ] 既存ユーザーで二重アカウントが作られていない（`select count(*) from user_master`）
 - [ ] グループ／仕入先マスタが部門フィルタ付きで表示される（部門ごとに1つずつ確認）
