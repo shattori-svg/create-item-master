@@ -1,5 +1,45 @@
 # Supabase → Cloud SQL for PostgreSQL 移行手順
 
+> ## ✅ 移行完了（2026-08-23 20:31 JST / 11:31 UTC）
+>
+> 本番トラフィック 100% が Cloud SQL 版リビジョン `item-master-create-dev-00042-ngb`
+> （merge commit `ae74528`）に移行済み。切り替え直後の実測:
+>
+> | 確認項目 | 結果 |
+> |---|---|
+> | `[db] pool created (max=4) target=/cloudsql/item-master-creater:asia-northeast1:item-master-db` | ✅ |
+> | 実ユーザーのログイン | ✅ `[auth] login user_id=1 oid=a1043211-...` |
+> | 書き込みの着地 | ✅ `user_master.updated_at` が 11:31:26 に更新 |
+> | クライアント接続数 | ✅ 3 / 25（`app` は 1） |
+> | `/`, `/login`, `/config.js`, `/api/auth/status` | ✅ 302 / 302 / 200 / 200 |
+> | ログインのリダイレクト先 | ✅ 本番コールバック |
+> | トラフィック設定 | ✅ `latestRevision=True`（自動ルーティングに復帰） |
+>
+> 最終同期時点のデータ: group 977 / supplier 209 / store 1 / user 26 / operation_log 2,792。
+> シーケンスは `seq = max(id)`、制約 17・インデックス 7 でベースラインと一致。
+>
+> **切り戻し**: Supabase は稼働中で旧リビジョン `00030-7ns` も残っている。
+> 1〜2 週間は解約しないこと。
+>
+> ```bash
+> gcloud run services update-traffic item-master-create-dev \
+>   --project=item-master-creater --region=asia-northeast1 \
+>   --to-revisions=item-master-create-dev-00030-7ns=100
+> ```
+>
+> ### 残作業
+>
+> 1. **重複ユーザー行の統合** — `docs/db/003_merge_duplicate_user_master_rows.sql` を Cloud SQL に対して実行。
+>    id 1 (`s.hattori@oiclove.onmicrosoft.com`, oid あり, `{01}`) と
+>    id 24 (`shun.hattori@oic-g.com`, oid なし, `{01..06}`) が同一人物で、
+>    oid 照合が id 1 を選ぶため**権限の狭い行でログインしている**。他ユーザーも要確認
+> 2. **Cloud Scheduler の同期を確認** — 次回の supplier 同期（毎時 15 分）が Cloud SQL に書けているか
+> 3. `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` の削除（切り戻し可能性がなくなってから）
+> 4. Entra のタグ URL 用リダイレクト URI の削除（任意）
+> 5. Supabase 解約（並走期間終了後）。**ただし egress 超過の真因は同一組織の別プロジェクト**
+>    （`vxufzjquwthdedmacyhu`）側にあるため、そちらの調査は別途必要
+
+
 調査レポート: [docs/tech-research/20260823-supabase-to-cloudsql.md](tech-research/20260823-supabase-to-cloudsql.md)
 
 移行の背景: Supabase の egress クォータ超過 + spend cap により、プロジェクトが停止し
