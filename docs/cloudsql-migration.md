@@ -435,12 +435,33 @@ pg_dump -h "$SUPA_HOST" -p 5432 -U "$SUPA_USER" -d postgres --schema=public --no
 pg_restore --no-owner --no-acl --clean --if-exists -d "$LOCAL_CONN" supabase_backup.dump
 ```
 
-その後トラフィックを移す:
+その後 **`main` にマージして push する。これがカットオーバーそのもの。**
 
 ```bash
-gcloud run services update-traffic item-master-create-dev \
-  --project="$PROJECT_ID" --region="$REGION" --to-latest
+git switch main && git merge --no-ff feat/cloudsql-migration && git push origin main
 ```
+
+### デプロイ経路（2026-08-23 判明）
+
+このサービスは手動デプロイではなく **GitHub `main` への push で自動デプロイ**される。
+
+| 項目 | 値 |
+|---|---|
+| トリガー | `rmgpgab-item-master-create-dev-asia-northeast1-shattori-svg-cbf` |
+| 対象 | `shattori-svg/create-item-master`（このリポジトリの `origin`） |
+| 条件 | **`main` への push のみ**（`^main$`） |
+| 実行 SA | `894174291476-compute@developer.gserviceaccount.com` |
+| 手順 | `docker build` → `docker push` → `gcloud run services update --image=... --labels=...` |
+
+**重要**: デプロイ手順は `--image` とラベルしか変更しない。環境変数・シークレット・
+`--add-cloudsql-instances` はサービステンプレート側に残るため、**先にテンプレートへ
+DB 設定を入れておけば、マージするだけで正しい構成のリビジョンが出る**（設定済み）。
+
+**ブランチを push してもデプロイは走らない**（`^main$` フィルタ）ので、
+レビュー用の push は安全。`main` へのマージが唯一のトリガー。
+
+`deploy.sh` / `deploy.ps1` はこの経路と無関係で、しかも `gcr.io` リポジトリが
+存在しないため実行しても失敗する。使わないこと。
 
 **全ユーザーのセッションが切れて再ログインが必要になる**（`express-session` が MemoryStore のため、
 リビジョンが変わるとセッションが消える。`SESSION_SECRET` が同じでも同様）。業務時間外に実施する。
