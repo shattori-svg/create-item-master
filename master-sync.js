@@ -1,7 +1,7 @@
 import { queryOData } from './bc-client.js';
 
 // Pulls master data from LS-Central (BC) published OData web services and
-// upserts it into Supabase, replacing the manual xlsx upload for these masters.
+// upserts it into Cloud SQL (PostgreSQL), replacing the manual xlsx upload for these masters.
 //
 // Field mappings were confirmed against the live tenant on 2026-06-18 (see
 // docs/tech-research/20260618-ls-central-master-sync.md). Multilingual fields
@@ -53,33 +53,25 @@ const UPSERT_BATCH = 500;
 
 const norm = (v) => (v == null ? '' : String(v).trim());
 
-/** Fetch all rows of the given columns from a table, paging past Supabase's 1000-row cap. */
-async function fetchAllExisting(supabase, table, columns) {
-  const pageSize = 1000;
-  const all = [];
-  for (let from = 0; ; from += pageSize) {
-    const { data, error } = await supabase
-      .from(table)
-      .select(columns.join(','))
-      .range(from, from + pageSize - 1);
-    if (error) throw new Error(`${table} select failed: ${error.message}`);
-    all.push(...(data || []));
-    if (!data || data.length < pageSize) break;
-  }
-  return all;
+/**
+ * Fetch all rows of the given columns from a table. Plain SQL has no row cap, so
+ * unlike the PostgREST version this needs no paging.
+ */
+async function fetchAllExisting(db, table, columns) {
+  return db.queryRows(`select ${columns.join(', ')} from ${table}`);
 }
 
 /**
- * Fetch one master from BC and upsert into Supabase.
+ * Fetch one master from BC and upsert into Cloud SQL.
  * @param {'group'|'supplier'} type
- * @param {object} supabase service-role client
+ * @param {typeof import('./db.js')} db data access module
  * @param {{ triggeredBy?: string, dryRun?: boolean }} opts
  * @returns {Promise<object>} result summary
  */
-export async function runSync(type, supabase, { triggeredBy = 'system', dryRun = false } = {}) {
+export async function runSync(type, db, { triggeredBy = 'system', dryRun = false } = {}) {
   const def = DEFS[type];
   if (!def) throw new Error(`unknown sync type: ${type}`);
-  if (!supabase) throw new Error('Database not configured');
+  if (!db) throw new Error('Database not configured');
 
   const startedAt = Date.now();
   const rows = await queryOData(def.service, { select: def.select });
@@ -94,7 +86,7 @@ export async function runSync(type, supabase, { triggeredBy = 'system', dryRun =
 
   // Dry run: compare against existing rows and report the diff WITHOUT writing.
   if (dryRun) {
-    const existing = await fetchAllExisting(supabase, def.table, [def.conflict, ...def.fields]);
+    const existing = await fetchAllExisting(db, def.table, [def.conflict, ...def.fields]);
     const byKey = new Map(existing.map((r) => [String(r[def.conflict]), r]));
     let toInsert = 0;
     let toUpdate = 0;
@@ -127,11 +119,16 @@ export async function runSync(type, supabase, { triggeredBy = 'system', dryRun =
   }
 
   let upserted = 0;
-  for (let i = 0; i < unique.length; i += UPSERT_BATCH) {
-    const chunk = unique.slice(i, i + UPSERT_BATCH);
-    const { error } = await supabase.from(def.table).upsert(chunk, { onConflict: def.conflict });
-    if (error) throw new Error(`${def.table} upsert failed: ${error.message}`);
-    upserted += chunk.length;
+  try {
+    upserted = await db.bulkUpsert(
+      def.table,
+      [def.conflict, ...def.fields],
+      unique,
+      def.conflict,
+      { chunkSize: UPSERT_BATCH },
+    );
+  } catch (err) {
+    throw new Error(`${def.table} upsert failed: ${err.message}`);
   }
 
   const durationMs = Date.now() - startedAt;
@@ -139,12 +136,18 @@ export async function runSync(type, supabase, { triggeredBy = 'system', dryRun =
 
   // Best-effort audit entry, reusing operation_log (no schema change).
   try {
-    await supabase.from('operation_log').insert({
-      username: triggeredBy,
-      action: def.action,
-      item_count: upserted,
-      details: { fetched: rows.length, service: def.service, durationMs },
-    });
+    // details is passed as an untyped parameter so Postgres coerces it to whatever
+    // the column is (json / jsonb / text).
+    await db.query(
+      `insert into operation_log (username, action, item_count, details)
+       values ($1, $2, $3, $4)`,
+      [
+        triggeredBy,
+        def.action,
+        upserted,
+        JSON.stringify({ fetched: rows.length, service: def.service, durationMs }),
+      ],
+    );
   } catch (err) {
     console.error(`[master-sync] operation_log insert failed (${type}):`, err.message);
   }
@@ -155,17 +158,21 @@ export async function runSync(type, supabase, { triggeredBy = 'system', dryRun =
  * Latest sync result per type, from operation_log, for the admin UI.
  * @returns {Promise<Record<string, object>>}
  */
-export async function latestSyncStatus(supabase) {
-  if (!supabase) return {};
+export async function latestSyncStatus(db) {
+  if (!db) return {};
   const out = {};
   for (const type of SYNC_TYPES) {
-    const { data, error } = await supabase
-      .from('operation_log')
-      .select('created_at, item_count, username, details')
-      .eq('action', DEFS[type].action)
-      .order('created_at', { ascending: false })
-      .limit(1);
-    if (!error && data && data[0]) out[type] = data[0];
+    // Best-effort per type: a failure here should not blank out the whole admin panel.
+    try {
+      const row = await db.queryOne(
+        `select created_at, item_count, username, details from operation_log
+          where action = $1 order by created_at desc limit 1`,
+        [DEFS[type].action],
+      );
+      if (row) out[type] = row;
+    } catch (err) {
+      console.error(`[master-sync] latestSyncStatus(${type}) failed:`, err.message);
+    }
   }
   return out;
 }

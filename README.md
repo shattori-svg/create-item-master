@@ -61,6 +61,27 @@ npm run start
 - `USERS_FILE`（既定: `data/users.json`）
 - `PORT`（既定: `8080`）
 
+### データベース（Cloud SQL for PostgreSQL）
+
+ユーザーマスタ・分類／仕入先／店舗マスタ・操作ログは Cloud SQL for PostgreSQL に置きます。
+未設定でもサーバーは起動しますが、DB 系エンドポイントは 503 を返し、
+ユーザーマスタは `data/users.json` にフォールバックします（開発用）。
+
+ローカル開発 / Cloud SQL Auth Proxy 経由:
+
+- `DATABASE_URL`（例: `postgresql://app:<password>@127.0.0.1:5433/item_import`）
+
+Cloud Run 本番（組込みの Cloud SQL 連携を使う場合）:
+
+- `INSTANCE_UNIX_SOCKET`（例: `/cloudsql/<PROJECT>:<REGION>:<INSTANCE>`）
+- `DB_USER` / `DB_PASS` / `DB_NAME`
+- `DB_POOL_MAX`（既定: `5`。**Cloud Run の `--max-instances` × この値 < DB の `max_connections`** を満たすこと）
+
+TCP 接続（Private IP など）を使う場合は `DB_HOST` / `DB_PORT`（既定 5432）/ `DB_SSL` / `DB_CA_CERT`。
+
+インスタンス作成・データ移行・検証手順は [docs/cloudsql-migration.md](docs/cloudsql-migration.md) を参照。
+以前使用していた `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` は不要になりました。
+
 ### Cloud Run へのデプロイ
 
 gcloud CLI でログイン・プロジェクト設定済みの状態で実行します。

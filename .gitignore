@@ -15,3 +15,7 @@ data/
 
 # Reference / sample spreadsheets dropped under docs/
 docs/Item_*.xlsx
+
+# Database dumps — contain production data (user emails, operation logs). Never commit.
+*.dump
+*.sql.gz

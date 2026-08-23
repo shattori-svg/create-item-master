@@ -5,10 +5,10 @@ import crypto from 'node:crypto';
 import express from 'express';
 import session from 'express-session';
 import multer from 'multer';
-import { createClient } from '@supabase/supabase-js';
 import { Storage } from '@google-cloud/storage';
 import * as XLSX from 'xlsx';
 import * as entraAuth from './entra-auth.js';
+import * as db from './db.js';
 import { isBcConfigured } from './bc-client.js';
 import { runSync, latestSyncStatus, SYNC_TYPES } from './master-sync.js';
 import {
@@ -22,12 +22,10 @@ import {
   updateUserIdentity,
 } from './users-store.js';
 
-// --- Supabase client (service role for server-side writes) ---
-const SUPABASE_URL = process.env.SUPABASE_URL || '';
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
-const supabase = SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY
-  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
-  : null;
+// --- Cloud SQL (PostgreSQL) ---
+// The pool lives in db.js and is created lazily on first query. Endpoints keep
+// returning 503 when the connection env vars are absent, as they did before.
+const dbConfigured = db.isDbConfigured();
 
 // --- GCS client (export retention bucket) ---
 // 90日 lifecycle のバケットに xlsx を保管。バケット未設定時は保管をスキップして
@@ -59,8 +57,8 @@ function buildExportObjectPath(logId, filename) {
   return `exports/${yyyy}/${mm}/${dd}/${logId}_${safeName}`;
 }
 
-// Supabase クライアントをユーザーストアに注入
-initUsersStore(supabase);
+// DB モジュールをユーザーストアに注入（未設定なら null → users.json フォールバック）
+initUsersStore(dbConfigured ? db : null);
 
 const app = express();
 const PORT = Number(process.env.PORT || 8080);
@@ -333,17 +331,18 @@ function getSupplierDeptFromNo(supplierNo) {
 }
 
 app.get('/api/masters/groups', requireAuth, async (req, res) => {
-  if (!supabase) return res.status(503).json({ error: 'Database not configured' });
+  if (!dbConfigured) return res.status(503).json({ error: 'Database not configured' });
   const dept = String(req.query.dept || '');
   try {
     const digit = deptDigitGroup(dept);
-    const { data, error } = await supabase
-      .from('group_master')
-      .select('product_group_code, description, description_tha, description_jpn')
-      .like('product_group_code', `${digit}%`)
-      .order('product_group_code');
-    if (error) throw error;
-    const rows = (data || []).map((r) => ({
+    const data = await db.queryRows(
+      `select product_group_code, description, description_tha, description_jpn
+         from group_master
+        where product_group_code like $1
+        order by product_group_code`,
+      [`${digit}%`],
+    );
+    const rows = data.map((r) => ({
       productGroupCode: r.product_group_code,
       description: r.description || '',
       descriptionTha: r.description_tha || '',
@@ -357,17 +356,20 @@ app.get('/api/masters/groups', requireAuth, async (req, res) => {
 });
 
 app.get('/api/masters/suppliers', requireAuth, async (req, res) => {
-  if (!supabase) return res.status(503).json({ error: 'Database not configured' });
+  if (!dbConfigured) return res.status(503).json({ error: 'Database not configured' });
   const dept = String(req.query.dept || '');
   try {
     const digit = deptDigitGroup(dept);
-    const { data, error } = await supabase
-      .from('supplier_master')
-      .select('supplier_no, abbreviation, name_eng, name_tha')
-      .like('supplier_no', `_${digit}%`)
-      .order('supplier_no');
-    if (error) throw error;
-    const rows = (data || []).map((r) => ({
+    // `_` is LIKE's single-character wildcard, which is exactly what skipping the
+    // first char of supplier_no needs (the dept digit sits in position 2).
+    const data = await db.queryRows(
+      `select supplier_no, abbreviation, name_eng, name_tha
+         from supplier_master
+        where supplier_no like $1
+        order by supplier_no`,
+      [`_${digit}%`],
+    );
+    const rows = data.map((r) => ({
       supplierNo: r.supplier_no,
       abbreviation: r.abbreviation || '',
       nameEng: r.name_eng || '',
@@ -381,7 +383,7 @@ app.get('/api/masters/suppliers', requireAuth, async (req, res) => {
 });
 
 app.post('/api/masters/groups/import', requireAuth, upload.single('file'), async (req, res) => {
-  if (!supabase) return res.status(503).json({ error: 'Database not configured' });
+  if (!dbConfigured) return res.status(503).json({ error: 'Database not configured' });
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   try {
     const wb = XLSX.read(req.file.buffer, { type: 'buffer' });
@@ -413,10 +415,12 @@ app.post('/api/masters/groups/import', requireAuth, upload.single('file'), async
       }
     }
 
-    const { error } = await supabase
-      .from('group_master')
-      .upsert(uniqueRecords, { onConflict: 'product_group_code' });
-    if (error) throw error;
+    await db.bulkUpsert(
+      'group_master',
+      ['product_group_code', 'description', 'description_tha', 'description_jpn'],
+      uniqueRecords,
+      'product_group_code',
+    );
     return res.json({ ok: true, count: uniqueRecords.length });
   } catch (err) {
     console.error('POST /api/masters/groups/import:', err);
@@ -425,7 +429,7 @@ app.post('/api/masters/groups/import', requireAuth, upload.single('file'), async
 });
 
 app.post('/api/masters/suppliers/import', requireAuth, upload.single('file'), async (req, res) => {
-  if (!supabase) return res.status(503).json({ error: 'Database not configured' });
+  if (!dbConfigured) return res.status(503).json({ error: 'Database not configured' });
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   try {
     const wb = XLSX.read(req.file.buffer, { type: 'buffer' });
@@ -457,10 +461,12 @@ app.post('/api/masters/suppliers/import', requireAuth, upload.single('file'), as
       }
     }
 
-    const { error } = await supabase
-      .from('supplier_master')
-      .upsert(uniqueRecords, { onConflict: 'supplier_no' });
-    if (error) throw error;
+    await db.bulkUpsert(
+      'supplier_master',
+      ['supplier_no', 'abbreviation', 'name_eng', 'name_tha'],
+      uniqueRecords,
+      'supplier_no',
+    );
     return res.json({ ok: true, count: uniqueRecords.length });
   } catch (err) {
     console.error('POST /api/masters/suppliers/import:', err);
@@ -478,7 +484,7 @@ app.post('/api/masters/suppliers/import', requireAuth, upload.single('file'), as
  *   - items: JSON 文字列化された配列（互換のため details に保管）
  */
 app.post('/api/log/export', requireAuth, upload.single('file'), async (req, res) => {
-  if (!supabase) return res.status(503).json({ error: 'Database not configured' });
+  if (!dbConfigured) return res.status(503).json({ error: 'Database not configured' });
   const dept = String(req.body?.dept || '');
   const itemCount = Number(req.body?.itemCount) || 0;
   const filename = String(req.body?.filename || '');
@@ -490,21 +496,24 @@ app.post('/api/log/export', requireAuth, upload.single('file'), async (req, res)
 
   let logId = null;
   try {
-    const { data, error } = await supabase
-      .from('operation_log')
-      .insert({
-        username: req.session.username || null,
-        user_display_name: req.session.displayName || null,
-        action: 'export',
-        dept: dept || null,
-        item_count: itemCount,
-        filename: filename || null,
-        details: { items },
-      })
-      .select('id')
-      .single();
-    if (error) throw error;
-    logId = data.id;
+    // details is an untyped parameter so Postgres coerces it to the column type
+    // (json / jsonb / text) without the code having to know which.
+    const row = await db.queryOne(
+      `insert into operation_log
+         (username, user_display_name, action, dept, item_count, filename, details)
+       values ($1, $2, $3, $4, $5, $6, $7)
+       returning id`,
+      [
+        req.session.username || null,
+        req.session.displayName || null,
+        'export',
+        dept || null,
+        itemCount,
+        filename || null,
+        JSON.stringify({ items }),
+      ],
+    );
+    logId = row.id;
   } catch (err) {
     console.error('POST /api/log/export insert:', err.message);
     return res.status(500).json({ error: 'log_insert_failed' });
@@ -525,11 +534,7 @@ app.post('/api/log/export', requireAuth, upload.single('file'), async (req, res)
           },
         },
       });
-      const { error: updErr } = await supabase
-        .from('operation_log')
-        .update({ storage_path: objectPath })
-        .eq('id', logId);
-      if (updErr) throw updErr;
+      await db.query('update operation_log set storage_path = $1 where id = $2', [objectPath, logId]);
     } catch (err) {
       console.error('POST /api/log/export gcs upload:', err.message);
       // storage_path 未設定のままログだけ残る → 後方互換と同じ扱い
@@ -539,46 +544,56 @@ app.post('/api/log/export', requireAuth, upload.single('file'), async (req, res)
   return res.json({ ok: true, logId });
 });
 
-// PostgREST caps a single response at 1000 rows by default, so filtering is
-// pushed down to the DB (dept / date range / free text) instead of returning
-// only the newest N rows and filtering in the browser. This lets a date/dept
-// filter reach arbitrarily old records while staying under the row cap.
+// Filtering (dept / date range / free text) is pushed down to the DB rather than
+// returning the newest N rows and filtering in the browser, so a date/dept filter
+// can reach arbitrarily old records while the response stays bounded.
 const ADMIN_LOGS_LIMIT = 1000;
 
 app.get('/api/admin/logs', requireAdmin, async (req, res) => {
-  if (!supabase) return res.status(503).json({ error: 'Database not configured' });
+  if (!dbConfigured) return res.status(503).json({ error: 'Database not configured' });
   try {
-    let query = supabase
-      .from('operation_log')
-      .select('id, created_at, username, user_display_name, action, dept, item_count, filename, storage_path')
-      .order('created_at', { ascending: false })
-      .limit(ADMIN_LOGS_LIMIT);
+    const where = [];
+    const params = [];
 
     const dept = String(req.query.dept || '').trim();
-    if (dept) query = query.eq('dept', dept);
+    if (dept) {
+      params.push(dept);
+      where.push(`dept = $${params.length}`);
+    }
 
     // `from`/`to` are ISO timestamps computed client-side from local-date inputs
     // so the range keeps the user's local-day boundaries.
     const from = String(req.query.from || '').trim();
     const to = String(req.query.to || '').trim();
-    if (from) query = query.gte('created_at', from);
-    if (to) query = query.lte('created_at', to);
-
-    // Free-text search over user + filename. Strip PostgREST or() structural
-    // chars so the filter string can't break; ILIKE wildcards (`%`/`_`) are left
-    // as-is (harmless, and `_` still matches literal underscores in filenames).
-    const rawQ = String(req.query.q || '').trim().slice(0, 100);
-    const safeQ = rawQ.replace(/[,()"\\]/g, ' ').replace(/\s+/g, ' ').trim();
-    if (safeQ) {
-      const pat = `%${safeQ}%`;
-      query = query.or(
-        `username.ilike.${pat},user_display_name.ilike.${pat},filename.ilike.${pat}`,
-      );
+    if (from) {
+      params.push(from);
+      where.push(`created_at >= $${params.length}`);
+    }
+    if (to) {
+      params.push(to);
+      where.push(`created_at <= $${params.length}`);
     }
 
-    const { data, error } = await query;
-    if (error) throw error;
-    const logs = data || [];
+    // Free-text search over user + filename. The pattern is a bound parameter, so
+    // no character stripping is needed (the old PostgREST or() filter was string
+    // interpolated and had to be sanitized). ILIKE wildcards (`%` / `_`) typed by
+    // the user still act as wildcards, same as before.
+    const rawQ = String(req.query.q || '').trim().slice(0, 100);
+    if (rawQ) {
+      params.push(`%${rawQ}%`);
+      const p = `$${params.length}`;
+      where.push(`(username ilike ${p} or user_display_name ilike ${p} or filename ilike ${p})`);
+    }
+
+    params.push(ADMIN_LOGS_LIMIT);
+    const logs = await db.queryRows(
+      `select id, created_at, username, user_display_name, action, dept, item_count, filename, storage_path
+         from operation_log
+         ${where.length ? `where ${where.join(' and ')}` : ''}
+        order by created_at desc
+        limit $${params.length}`,
+      params,
+    );
     return res.json({
       logs,
       limit: ADMIN_LOGS_LIMIT,
@@ -596,17 +611,16 @@ app.get('/api/admin/logs', requireAdmin, async (req, res) => {
  * 保管対象外（過去ログ等）や 90日経過で物理削除済みの場合は 404 を返す。
  */
 app.get('/api/admin/logs/:id/download', requireAdmin, async (req, res) => {
-  if (!supabase) return res.status(503).json({ error: 'Database not configured' });
+  if (!dbConfigured) return res.status(503).json({ error: 'Database not configured' });
   if (!gcsBucket) return res.status(503).json({ error: 'storage_not_configured' });
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid_id' });
   try {
-    const { data, error } = await supabase
-      .from('operation_log')
-      .select('id, filename, storage_path')
-      .eq('id', id)
-      .single();
-    if (error || !data) return res.status(404).json({ error: 'log_not_found' });
+    const data = await db.queryOne(
+      'select id, filename, storage_path from operation_log where id = $1',
+      [id],
+    );
+    if (!data) return res.status(404).json({ error: 'log_not_found' });
     if (!data.storage_path) return res.status(404).json({ error: 'file_not_retained' });
 
     const file = gcsBucket.file(data.storage_path);
@@ -630,14 +644,13 @@ app.get('/api/admin/logs/:id/download', requireAdmin, async (req, res) => {
 // --- Master Export ---
 
 app.get('/api/masters/groups/export', requireAdmin, async (req, res) => {
-  if (!supabase) return res.status(503).json({ error: 'Database not configured' });
+  if (!dbConfigured) return res.status(503).json({ error: 'Database not configured' });
   try {
-    const { data, error } = await supabase
-      .from('group_master')
-      .select('product_group_code, description, description_tha, description_jpn')
-      .order('product_group_code');
-    if (error) throw error;
-    const rows = (data || []).map((r) => ({
+    const data = await db.queryRows(
+      `select product_group_code, description, description_tha, description_jpn
+         from group_master order by product_group_code`,
+    );
+    const rows = data.map((r) => ({
       'Product Group Code': r.product_group_code,
       'Description': r.description || '',
       'Description (THA)': r.description_tha || '',
@@ -656,14 +669,13 @@ app.get('/api/masters/groups/export', requireAdmin, async (req, res) => {
 });
 
 app.get('/api/masters/suppliers/export', requireAdmin, async (req, res) => {
-  if (!supabase) return res.status(503).json({ error: 'Database not configured' });
+  if (!dbConfigured) return res.status(503).json({ error: 'Database not configured' });
   try {
-    const { data, error } = await supabase
-      .from('supplier_master')
-      .select('supplier_no, abbreviation, name_eng, name_tha')
-      .order('supplier_no');
-    if (error) throw error;
-    const rows = (data || []).map((r) => ({
+    const data = await db.queryRows(
+      `select supplier_no, abbreviation, name_eng, name_tha
+         from supplier_master order by supplier_no`,
+    );
+    const rows = data.map((r) => ({
       'Supplier No.': r.supplier_no,
       'Abbreviation': r.abbreviation || '',
       'Supplier Official Name (English)': r.name_eng || '',
@@ -684,15 +696,13 @@ app.get('/api/masters/suppliers/export', requireAdmin, async (req, res) => {
 // --- Store Master ---
 
 app.get('/api/masters/stores', requireAuth, async (req, res) => {
-  if (!supabase) return res.status(503).json({ error: 'Database not configured' });
+  if (!dbConfigured) return res.status(503).json({ error: 'Database not configured' });
   try {
-    const { data, error } = await supabase
-      .from('store_master')
-      .select('store_code, store_name, store_name_eng')
-      .eq('active', true)
-      .order('store_code');
-    if (error) throw error;
-    return res.json(data || []);
+    const data = await db.queryRows(
+      `select store_code, store_name, store_name_eng
+         from store_master where active = true order by store_code`,
+    );
+    return res.json(data);
   } catch (err) {
     console.error('GET /api/masters/stores:', err);
     return res.status(500).json({ error: err.message });
@@ -700,7 +710,7 @@ app.get('/api/masters/stores', requireAuth, async (req, res) => {
 });
 
 app.post('/api/masters/stores/import', requireAdmin, upload.single('file'), async (req, res) => {
-  if (!supabase) return res.status(503).json({ error: 'Database not configured' });
+  if (!dbConfigured) return res.status(503).json({ error: 'Database not configured' });
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   try {
     const wb = XLSX.read(req.file.buffer, { type: 'buffer' });
@@ -715,10 +725,12 @@ app.post('/api/masters/stores/import', requireAdmin, upload.single('file'), asyn
       }))
       .filter((r) => r.store_code);
     const unique = [...new Map(records.map((r) => [r.store_code, r])).values()];
-    const { error } = await supabase
-      .from('store_master')
-      .upsert(unique, { onConflict: 'store_code' });
-    if (error) throw error;
+    await db.bulkUpsert(
+      'store_master',
+      ['store_code', 'store_name', 'store_name_eng', 'active'],
+      unique,
+      'store_code',
+    );
     return res.json({ count: unique.length });
   } catch (err) {
     console.error('POST /api/masters/stores/import:', err);
@@ -735,14 +747,14 @@ app.post('/api/masters/stores/import', requireAdmin, upload.single('file'), asyn
  *   - supplier -> Retail_Vendor_Card_Excel    -> supplier_master (scheduled hourly)
  */
 app.post('/api/admin/masters/sync/:type', requireAdminOrSyncToken, async (req, res) => {
-  if (!supabase) return res.status(503).json({ error: 'Database not configured' });
+  if (!dbConfigured) return res.status(503).json({ error: 'Database not configured' });
   const type = String(req.params.type || '');
   if (!SYNC_TYPES.includes(type)) return res.status(400).json({ error: 'invalid_type' });
   if (!isBcConfigured()) return res.status(503).json({ error: 'bc_not_configured' });
   try {
     const triggeredBy = req.session?.username || 'scheduler';
     const dryRun = req.query.dryRun === '1' || req.query.dryRun === 'true';
-    const result = await runSync(type, supabase, { triggeredBy, dryRun });
+    const result = await runSync(type, db, { triggeredBy, dryRun });
     return res.json(result);
   } catch (err) {
     console.error(`POST /api/admin/masters/sync/${type}:`, err.message);
@@ -752,9 +764,9 @@ app.post('/api/admin/masters/sync/:type', requireAdminOrSyncToken, async (req, r
 
 /** Latest sync result per master type, for the admin UI. */
 app.get('/api/admin/masters/sync/status', requireAdmin, async (_req, res) => {
-  if (!supabase) return res.status(503).json({ error: 'Database not configured' });
+  if (!dbConfigured) return res.status(503).json({ error: 'Database not configured' });
   try {
-    const status = await latestSyncStatus(supabase);
+    const status = await latestSyncStatus(db);
     return res.json({ bcConfigured: isBcConfigured(), status });
   } catch (err) {
     console.error('GET /api/admin/masters/sync/status:', err.message);
