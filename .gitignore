@@ -10,8 +10,14 @@ dist/
 .claude/
 TODO.md
 
-# Local runtime data (users.json fallback, etc.)
-data/
+# Local runtime data (users.json fallback, etc.).
+# Anchored with a leading slash so it matches only the repo-root directory.
+# An unanchored `data/` also matches src/data/, which holds application source.
+# Git kept tracking those files (ignore rules do not apply to tracked paths), but
+# `gcloud builds submit` derives .gcloudignore from .gitignore without consulting
+# the index, so src/data/* was silently dropped from the build context and the
+# container build failed on `Could not resolve "./data/departments.js"`.
+/data/
 
 # Reference / sample spreadsheets dropped under docs/
 docs/Item_*.xlsx
