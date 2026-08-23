@@ -391,38 +391,83 @@ OIDC のコールバックが redirect_uri 不一致で失敗する。ログイ�
 Entra アプリ登録にタグ URL の `/auth/callback` を**追加**し（可逆）、
 そのリビジョンだけ `--update-env-vars=ENTRA_REDIRECT_URI=<タグURL>/auth/callback` を指定する。
 
-### 🚨 ブロッカー: このプロジェクトは新規リビジョンを作成できない（2026-08-23 時点・未解決）
+### ⚠️ `gcloud run deploy --source` を使わないこと（2026-08-23 に判明）
 
-`gcloud run deploy` が何をしても `Container import failed` で失敗する。
-**移行作業とは無関係の既存の環境問題**で、以下の対照実験で確認済み:
+`gcloud run deploy --source .` でビルドしたイメージは **Cloud Run が取り込めず**、
+リビジョンが `Container import failed` で Ready にならない。原因は未特定だが再現性がある。
 
-| 実験 | 結果 |
+**同じコードを `gcloud builds submit --tag <AR パス>`（= トリガーと同じ plain docker build）で
+ビルドすると正常に動く。** 実測: インポート 2.41 秒、コンテナ healthy 2.31 秒、
+リビジョン全体 8.39 秒で Ready。
+
+```bash
+# OK: トリガーと同じ方式
+gcloud builds submit --project="$PROJECT_ID" \
+  --tag "asia-northeast1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/create-item-master/item-master-create-dev:<tag>"
+
+# NG: 取り込めないイメージができる
+gcloud run deploy item-master-create-dev --source .
+```
+
+通常運用では `main` への push でトリガーがビルドするので、この落とし穴には当たらない。
+手動で検証用リビジョンを出したいときだけ注意する。
+
+#### リビジョンの成否は「型名」で判定すること
+
+`gcloud run deploy` は待機タイムアウトで exit 1 を返すことがあり、終了コードは信頼できない。
+また `--format='value(status.conditions[0].status)'` は **条件の並び順がリビジョンごとに異なる**ため
+Ready 以外の条件を読んでしまう。必ず型名で取る:
+
+```bash
+gcloud run revisions describe <revision> --project="$PROJECT_ID" --region="$REGION" \
+  --format='yaml(status.conditions)'
+```
+
+#### 失敗リビジョンを指すタグは残さないこと
+
+失敗したリビジョンにタグが残っているとサービスの `Ready` 条件が False で固定され、
+**以降のデプロイが自分のリビジョンは成功しているのに他リビジョンを参照して偽の失敗を報告する**。
+実例: トリガーのデプロイが
+`Revision 'item-master-create-dev-00036-hoh' is not ready` を返したが、
+そのデプロイ自身のリビジョン `00038-lxx` は Ready=True だった。
+
+```bash
+gcloud run services update-traffic item-master-create-dev \
+  --project="$PROJECT_ID" --region="$REGION" --remove-tags=<tag>
+```
+
+### ⚠️ トラフィックが `00030` に固定されている
+
+検証で `--no-traffic` を使った結果、サービスが「最新リビジョンへ自動ルーティング」から
+**明示的な固定**に変わっている:
+
+```
+spec.traffic: [ { percent: 100, revisionName: item-master-create-dev-00030-7ns } ]
+```
+
+**この状態では `main` にマージしてもトラフィックが切り替わらない**（リビジョンは作られる）。
+検証中は安全側に働くが、カットオーバー時は明示的に切り替える必要がある:
+
+```bash
+gcloud run services update-traffic item-master-create-dev \
+  --project="$PROJECT_ID" --region="$REGION" --to-latest
+```
+
+### 検証済みの内容（2026-08-23、ユーザー影響ゼロ）
+
+移行コードのリビジョンを `--no-traffic --tag=cloudsql` で出して確認した範囲:
+
+| 項目 | 結果 |
 |---|---|
-| 新イメージ + Cloud SQL 設定 | ❌ |
-| **稼働中リビジョン 00030 と同一の既知良好イメージ** | ❌ |
-| シークレットと Cloud SQL 設定を外した状態 | ❌ |
-| **まったく新規の別サービス** | ❌ |
+| イメージ取り込み | ✅ 2.41 秒 |
+| コンテナ起動 | ✅ `Server started on :8080 (externalAuth=true)` |
+| `DB_PASS` シークレット解決 | ✅（解決できなければリビジョンが Ready にならない） |
+| Cloud SQL ソケットのマウント | ✅ 同上 |
+| `/`, `/login`, `/config.js`, `/api/auth/status` | ✅ 本番と同一の応答 |
+| **DB への実クエリ** | ❌ 未検証（認証セッションが必要） |
 
-つまり `00030`（2026-08-04 作成、インポート済み）は動き続けるが、
-**このプロジェクトには今いかなるデプロイもできない**。移行の切り替え以前に、
-このアプリへの緊急修正も不可能な状態であることを意味する。
-
-原因の最有力候補: **Google APIs サービスエージェント
-`894174291476@cloudservices.gserviceaccount.com` に IAM バインディングが 1 つも無い**
-（既定では `roles/editor` を保持する）。同日、以下の 3 つも欠落していて個別に補った経緯があり、
-プロジェクトの権限が広範に剥がされた形跡と整合する:
-
-| 欠落していた権限 | 対処 |
-|---|---|
-| Compute SA → `item-master-creater_cloudbuild` バケット読み取り | バケット限定で `storage.objectViewer` 付与 |
-| Compute SA → `run-sources-...` バケット読み取り | バケット限定で `storage.objectViewer` 付与 |
-| Cloud Run サービスエージェント → AR 読み取り | リポジトリ + プロジェクトに `artifactregistry.reader` 付与 |
-
-⚠️ ただし **監査ログに import 段階の権限拒否は出ていない**ため、この推定は確証がない。
-`@cloudservices` への `roles/editor` 復元はセキュリティ上意図的に外された可能性があり、
-**変更した担当者に確認してから**実施すること。復元しても解決しない場合は Google Cloud サポート案件。
-
-この解消までカットオーバーは実行できない。Supabase 側は稼働中なので業務影響はない。
+DB クエリまで検証するには Entra アプリ登録にタグ URL の `/auth/callback` を追加する必要がある
+（`ENTRA_REDIRECT_URI` が本番 URL 固定のため）。追加は可逆。
 
 ### 切り替え（ここから初めてユーザー影響が出る）
 
