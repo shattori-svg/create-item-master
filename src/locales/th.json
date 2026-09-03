@@ -117,7 +117,7 @@
     "syncGroupSchedule": "อัตโนมัติ: ทุกวัน",
     "syncSupplierSchedule": "อัตโนมัติ: ทุกชั่วโมง",
     "syncRunning": "กำลังซิงค์…",
-    "syncSuccess": "✓ ซิงค์ {n} รายการแล้ว",
+    "syncSuccess": "✓ ซิงค์ {n} รายการแล้ว (ลบ {d} รายการ)",
     "syncError": "ข้อผิดพลาดในการซิงค์: ",
     "syncNever": "ยังไม่ได้รัน",
     "syncLast": "ซิงค์ล่าสุด: {time} ({n} รายการ)",

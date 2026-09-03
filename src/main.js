@@ -695,7 +695,9 @@ async function syncMaster(type) {
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || res.status);
     if (statusEl) {
-      statusEl.textContent = t('admin.syncSuccess').replace('{n}', body.upserted);
+      statusEl.textContent = t('admin.syncSuccess')
+        .replace('{n}', body.upserted)
+        .replace('{d}', body.deleted ?? 0);
       statusEl.className = 'master-import-status master-import-status--ok';
       statusEl.hidden = false;
     }

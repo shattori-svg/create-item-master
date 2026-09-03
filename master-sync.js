@@ -8,9 +8,12 @@ import { queryOData } from './bc-client.js';
 // live on the LS Central custom Retail_* pages (THA/JPN), which survive the
 // 2027 Wave 1 OData deprecation (that only affects Microsoft first-party pages).
 //
-// Upsert-only: rows removed in BC are NOT deleted locally (non-destructive,
-// matches the existing manual-import behavior). Stale-row handling is a future
-// consideration.
+// Full overwrite: each sync upserts every fetched row AND deletes local rows
+// whose key is absent from BC, inside one transaction. As a safety net the
+// delete is refused when BC returns zero rows (a wiped table is much more
+// likely to mean a BC-side problem than an intentionally emptied master).
+// The manual xlsx import endpoints stay upsert-only: their files are
+// department-scoped, so deleting unmatched rows would drop other departments.
 
 const str = (v) => (v == null ? '' : String(v).trim());
 
@@ -88,6 +91,7 @@ export async function runSync(type, db, { triggeredBy = 'system', dryRun = false
   if (dryRun) {
     const existing = await fetchAllExisting(db, def.table, [def.conflict, ...def.fields]);
     const byKey = new Map(existing.map((r) => [String(r[def.conflict]), r]));
+    const sourceKeys = new Set(unique.map((r) => String(r[def.conflict])));
     let toInsert = 0;
     let toUpdate = 0;
     let unchanged = 0;
@@ -110,29 +114,50 @@ export async function runSync(type, db, { triggeredBy = 'system', dryRun = false
         unchanged += 1;
       }
     }
+    // Full-overwrite: rows present locally but absent from BC would be deleted.
+    const deleteKeys = existing
+      .map((r) => String(r[def.conflict]))
+      .filter((k) => !sourceKeys.has(k));
     return {
       ok: true, type, dryRun: true, service: def.service,
       fetched: rows.length, unique: unique.length, existing: existing.length,
-      toInsert, toUpdate, unchanged, insertSamples, updateSamples,
+      toInsert, toUpdate, unchanged, toDelete: deleteKeys.length,
+      insertSamples, updateSamples, deleteSamples: deleteKeys.slice(0, 5),
       durationMs: Date.now() - startedAt,
     };
   }
 
+  // Refuse the destructive path on an empty fetch: an empty result set almost
+  // certainly means a BC-side outage or a broken service, not an emptied master.
+  if (unique.length === 0) {
+    throw new Error(`${def.service} returned 0 rows; refusing full overwrite of ${def.table}`);
+  }
+
   let upserted = 0;
+  let deleted = 0;
   try {
-    upserted = await db.bulkUpsert(
-      def.table,
-      [def.conflict, ...def.fields],
-      unique,
-      def.conflict,
-      { chunkSize: UPSERT_BATCH },
-    );
+    ({ upserted, deleted } = await db.withTransaction(async (client) => {
+      // Delete first so the statement sees only pre-sync rows; the upsert then
+      // restores/refreshes everything BC still has.
+      const delRes = await client.query(
+        `delete from ${def.table} where not (${def.conflict} = any($1::text[]))`,
+        [unique.map((r) => r[def.conflict])],
+      );
+      const written = await db.bulkUpsert(
+        def.table,
+        [def.conflict, ...def.fields],
+        unique,
+        def.conflict,
+        { chunkSize: UPSERT_BATCH, client },
+      );
+      return { upserted: written, deleted: delRes.rowCount };
+    }));
   } catch (err) {
-    throw new Error(`${def.table} upsert failed: ${err.message}`);
+    throw new Error(`${def.table} full-overwrite sync failed: ${err.message}`);
   }
 
   const durationMs = Date.now() - startedAt;
-  const result = { ok: true, type, service: def.service, fetched: rows.length, upserted, durationMs };
+  const result = { ok: true, type, service: def.service, fetched: rows.length, upserted, deleted, durationMs };
 
   // Best-effort audit entry, reusing operation_log (no schema change).
   try {
@@ -145,7 +170,7 @@ export async function runSync(type, db, { triggeredBy = 'system', dryRun = false
         triggeredBy,
         def.action,
         upserted,
-        JSON.stringify({ fetched: rows.length, service: def.service, durationMs }),
+        JSON.stringify({ fetched: rows.length, deleted, service: def.service, durationMs }),
       ],
     );
   } catch (err) {

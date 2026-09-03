@@ -147,11 +147,13 @@ export async function withTransaction(fn) {
  * @param {string[]} columns
  * @param {Record<string, unknown>[]} rows
  * @param {string} conflictColumn
- * @param {{ chunkSize?: number }} [opts]
+ * @param {{ chunkSize?: number, client?: import('pg').PoolClient }} [opts]
+ *   Pass `client` to run inside an open transaction (see withTransaction).
  * @returns {Promise<number>} rows written
  */
-export async function bulkUpsert(table, columns, rows, conflictColumn, { chunkSize = 500 } = {}) {
+export async function bulkUpsert(table, columns, rows, conflictColumn, { chunkSize = 500, client } = {}) {
   if (rows.length === 0) return 0;
+  const exec = client ? (sql, params) => client.query(sql, params) : query;
   const updates = columns
     .filter((c) => c !== conflictColumn)
     .map((c) => `${c} = excluded.${c}`)
@@ -170,7 +172,7 @@ export async function bulkUpsert(table, columns, rows, conflictColumn, { chunkSi
     });
     const sql = `insert into ${table} (${columns.join(', ')}) values ${tuples.join(', ')}`
       + ` on conflict (${conflictColumn}) do update set ${updates}`;
-    await query(sql, params);
+    await exec(sql, params);
     written += chunk.length;
   }
   return written;
