@@ -117,7 +117,7 @@
     "syncGroupSchedule": "自動: 毎日",
     "syncSupplierSchedule": "自動: 毎時",
     "syncRunning": "同期中…",
-    "syncSuccess": "✓ {n} 件を同期しました",
+    "syncSuccess": "✓ {n} 件を同期しました（削除 {d} 件）",
     "syncError": "同期エラー: ",
     "syncNever": "未実行",
     "syncLast": "最終同期: {time}（{n} 件）",

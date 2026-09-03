@@ -71,7 +71,7 @@ S2S の管理者同意が未取得のため当面は委任の refresh_token を�
 | `POST /api/admin/masters/sync/:type` (`type`=`group`\|`supplier`) | 管理者セッション **or** `X-Sync-Token` ヘッダ | 同期実行（手動ボタン / Scheduler 共用） |
 | `GET /api/admin/masters/sync/status` | 管理者セッション | マスタタブの最終同期状況表示 |
 
-監査は `operation_log`（`action` = `sync_group` / `sync_supplier`、`item_count` = upsert 件数）に記録。
+監査は `operation_log`（`action` = `sync_group` / `sync_supplier`、`item_count` = upsert 件数、`details.deleted` = 削除件数）に記録。
 
 ## Cloud Scheduler 設定（本番）
 
@@ -97,7 +97,7 @@ gcloud scheduler jobs create http master-sync-supplier \
 
 ## 設計メモ
 
-- **upsert のみ**（BC で消えた行はローカル削除しない＝非破壊。既存の手動インポートと同一挙動）。
+- **全件洗い替え**（トランザクション内で BC に無い行を delete → 全行 upsert）。BC で消えた行はローカルでも削除される。安全弁として BC の取得結果が 0 件のときは削除を拒否しエラーにする（BC 側障害でテーブルを空にしないため）。手動 xlsx インポートは従来通り upsert のみ（ファイルが部門単位のため、削除すると他部門の行が消える）。
 - アクセストークンはサーバ内メモリにキャッシュ（有効期限60秒前に更新）。
 - OData は `@odata.nextLink` 追従でページング、`$select` で必要列のみ取得。429/5xx は指数バックオフでリトライ。
 - 反映は SPA の sessionStorage キャッシュをクリアして再取得（手動同期後は即時反映）。
